@@ -63,20 +63,24 @@ The central hub of the KPMN Suite. AEGIS is designed to build and update the oth
 **Topbar**
 - Live detection of connected KPMN sticks (DART / AVAS / MABS / Portable System)
 - Color-coded status pills — online/offline visually distinguished
-**Dokumente Tab**
+
+**Docoments Tab**
 - Organized folder structure for all KPMN sticks and personal documents
 - 3-column explorer (Folders | Files | Metadata Preview — in-app file preview planned for a future version)
 - Real subfolder navigation with double-click and back button
 - Per-folder live stick detection: if the physical KPMN stick for that folder is plugged in, its files are shown live
+
 **Vault Tab**
 - AES-256-GCM encryption with PBKDF2 key derivation
 - Both filenames and contents are encrypted
 - Master password with no recovery option (zero-knowledge by design)
 - Add / remove / open files — note: opening currently relies on temporary decryption and the system's default app, which is an interim solution; the goal is to handle all file viewing fully encrypted within AEGIS via a planned built-in document previewer
 - Auto-lock after 5 minutes of inactivity, on tab switch, or on app close
+
 **Templates Tab**
 - Document templates: add, create new file from template (Save As → opens with default app), remove
 - Text snippets: RTF editor with Bold / Italic / Underline / List, save/load, copy to clipboard with formatting
+
 ### Roadmap
  
 - [ ] Device Backups Tab
@@ -102,5 +106,5 @@ A fully portable Linux environment — browser, password manager, and editor —
 - Claude (Anthropic) — AI-assisted development
 ---
  
-*© 2026 Felix Koopmann — KPMN Development. A Vibecoding Project.*
+*© 2026 Felix Koopmann — KPMN Development with help of claude.ai (Anthropic). A Vibecoding Project.*
 *Licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). Not for commercial use.*
