@@ -1,6 +1,6 @@
 # KPMN Development USB-Stick Suite
  
-> A collection of purpose-built USB stick tools, each with its own distinct purpose and united under a single brand identity.
+> A collection of purpose-built USB stick tools, each with its own distinct purpose, united under a single brand identity.
  
 **The KPMN Development brand** is a hobby project by Felix Koopmann — Built with the help of Claude (Anthropic) as a Vibecoding project.
  
