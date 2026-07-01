@@ -85,7 +85,7 @@ The central hub of the KPMN Suite. AEGIS is designed to build and update the oth
  
 - [ ] Device Backups Tab
 - [ ] Multilanguage support (DE / EN — more languages may be available in the future)
-- [ ] Real file preview in Dokumente Tab — built-in document previewer (also planned to replace temporary decryption in the Vault)
+- [ ] Real file preview in the Documents Tab — built-in document previewer (also planned to replace temporary decryption in the Vault)
 - [ ] AVAS reminder passthrough — display package and SDI database age warnings directly in AEGIS, without needing to launch AVAS
 - [ ] Suite Builder — automatic setup and update of other KPMN sticks, software downloaded directly from official vendor sources via `curl`/`wget`, own files served from a self-hosted server
 - [ ] Stick 5 integration (Portable Ubuntu System)
