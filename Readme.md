@@ -64,7 +64,7 @@ The central hub of the KPMN Suite. AEGIS is designed to build and update the oth
 - Live detection of connected KPMN sticks (DART / AVAS / MABS / Portable System)
 - Color-coded status pills — online/offline visually distinguished
 
-**Docoments Tab**
+**Documents Tab**
 - Organized folder structure for all KPMN sticks and personal documents
 - 3-column explorer (Folders | Files | Metadata Preview — in-app file preview planned for a future version)
 - Real subfolder navigation with double-click and back button
