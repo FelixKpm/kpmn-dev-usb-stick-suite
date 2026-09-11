@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>AEGIS</RootNamespace>
+    <AssemblyName>AEGIS</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\**\*.png" />
+  </ItemGroup>
+
+  <!--
+    Signiert die gebaute EXE automatisch mit dem lokalen Kpmn-Development-Entwicklerzertifikat,
+    falls das Signier-Skript auf diesem Rechner vorhanden ist (liegt bewusst außerhalb des Repos,
+    damit das Zertifikat/Passwort nicht versioniert wird). Auf anderen Rechnern ohne dieses Skript
+    wird der Schritt übersprungen, statt den Build fehlschlagen zu lassen.
+  -->
+  <Target Name="SignAegisExecutable" AfterTargets="Build"
+          Condition="Exists('C:\Users\Koopm\Kpmn-Signing\sign-aegis.ps1')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;C:\Users\Koopm\Kpmn-Signing\sign-aegis.ps1&quot; -TargetExe &quot;$(TargetDir)$(TargetName).exe&quot;" />
+  </Target>
+
+</Project>
