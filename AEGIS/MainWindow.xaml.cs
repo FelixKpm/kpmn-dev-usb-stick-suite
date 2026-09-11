@@ -6,11 +6,13 @@ using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using Ellipse = System.Windows.Shapes.Ellipse;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
@@ -51,6 +53,22 @@ namespace AEGIS
 
         private static readonly Brush StickOnlineNameBrush = CreateFrozenBrush("#A8CCE8");
 
+        // ---------- AVAS-Wartungshinweis (Reminder-Passthrough) ----------
+        // AVAS selbst berechnet seine Veraltungs-Warnungen rein aus Datei-Zeitstempeln auf dem AVAS-Stick.
+        // AEGIS spiegelt diese Logik, damit der Hinweis auch ohne Start von AVAS sichtbar ist.
+        private const string AvasVolumeLabel = "AVAS";
+        private const string AvasDocumentFolder = "AVAS";
+        private const int AvasSdiStaleDays = 150;
+        private const int AvasPackageStaleDays = 180;
+
+        private static readonly Brush AvasWarnBorderBrush = CreateFrozenBrush("#C98A1E");
+        private static readonly Brush AvasWarnAccentBrush = CreateFrozenBrush("#FFB020");
+        private static readonly Brush AvasWarnValueBrush = CreateFrozenBrush("#F0D8A8");
+        private static readonly Brush AvasWarnPillBackgroundBrush = CreateFrozenBrush("#23305C");
+        private static readonly Brush AvasTooltipBackgroundBrush = CreateFrozenBrush("#152540");
+        private static readonly Brush AvasTooltipTextBrush = CreateFrozenBrush("#A8CCE8");
+        private static readonly Brush AvasNoticeBackgroundBrush = CreateFrozenBrush("#12FFB020");
+
         private static Brush CreateFrozenBrush(string hex)
         {
             var brush = (Brush)new BrushConverter().ConvertFromString(hex)!;
@@ -58,7 +76,13 @@ namespace AEGIS
             return brush;
         }
 
-        private readonly record struct StickIndicator(Ellipse Dot, TextBlock Label, string VolumeLabel, Brush AccentBrush);
+        private readonly record struct StickIndicator(
+            Ellipse Dot,
+            TextBlock Label,
+            string VolumeLabel,
+            Brush AccentBrush,
+            Border Pill,
+            TextBlock WarnMark);
 
         private readonly List<StickIndicator> _stickIndicators = new();
         private DispatcherTimer _stickRefreshTimer = null!;
@@ -219,6 +243,10 @@ namespace AEGIS
             else if (TabVault.IsChecked == true) LoadVaultTab();
             else if (TabTemplates.IsChecked == true) LoadTemplatesTab();
             else if (TabBackups.IsChecked == true) LoadBackupsTab();
+
+            // Tooltip/Hinweiszeile der AVAS-Pille sofort in der neuen Sprache neu aufbauen
+            if (_stickIndicators.Count > 0)
+                RefreshStickIndicators();
         }
 
         // ===================== STICK-INDIKATOREN (TOPBAR) =====================
@@ -242,9 +270,21 @@ namespace AEGIS
                     VerticalAlignment = VerticalAlignment.Center
                 };
 
+                // Warnzeichen hinter dem Namen – nur sichtbar, wenn der AVAS-Stick eine Wartung braucht
+                var warnMark = new TextBlock
+                {
+                    Text = "⚠",
+                    FontSize = 9,
+                    Foreground = AvasWarnAccentBrush,
+                    Margin = new Thickness(2, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Visibility = Visibility.Collapsed
+                };
+
                 var pillContent = new StackPanel { Orientation = Orientation.Horizontal };
                 pillContent.Children.Add(dot);
                 pillContent.Children.Add(label);
+                pillContent.Children.Add(warnMark);
 
                 var pill = new Border
                 {
@@ -257,20 +297,408 @@ namespace AEGIS
                     Child = pillContent
                 };
 
+                if (string.Equals(stick.VolumeLabel, AvasVolumeLabel, StringComparison.OrdinalIgnoreCase))
+                {
+                    pill.MouseLeftButtonUp += AvasPill_Click;
+                }
+
                 StickPanel.Children.Add(pill);
-                _stickIndicators.Add(new StickIndicator(dot, label, stick.VolumeLabel, CreateFrozenBrush(stick.AccentHex)));
+                _stickIndicators.Add(new StickIndicator(dot, label, stick.VolumeLabel, CreateFrozenBrush(stick.AccentHex), pill, warnMark));
             }
         }
 
         // Aktualisiert Farbe/Text der Stick-Pillen anhand der aktuell eingesteckten Wechseldatenträger
         private void RefreshStickIndicators()
         {
+            var avasStatus = GetAvasStatus();
+
             foreach (var indicator in _stickIndicators)
             {
                 var online = FindConnectedStick(indicator.VolumeLabel) != null;
                 indicator.Dot.Fill = online ? indicator.AccentBrush : (Brush)FindResource("BorderColor");
                 indicator.Label.Foreground = online ? StickOnlineNameBrush : (Brush)FindResource("TextMuted");
+
+                if (!string.Equals(indicator.VolumeLabel, AvasVolumeLabel, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                ApplyAvasWarnLook(indicator, online && avasStatus is { IsStale: true } ? avasStatus : null);
             }
+
+            UpdateAvasNotice(avasStatus);
+        }
+
+        // ===================== AVAS-WARTUNGSHINWEIS (REMINDER-PASSTHROUGH) =====================
+
+        // Ergebnis der Veraltungs-Prüfung des AVAS-Sticks (gleiche Schwellwerte wie AVAS selbst)
+        private sealed record AvasStatus(int? SdiAgeDays, int StaleCount, int TotalCount)
+        {
+            public bool IsStale => SdiAgeDays > AvasSdiStaleDays || StaleCount > 0;
+        }
+
+        private AvasStatus? _avasStatusCache;
+        private string? _avasStatusCacheRoot;
+        private DateTime _avasStatusCacheTime = DateTime.MinValue;
+        private static readonly TimeSpan AvasStatusCacheLifetime = TimeSpan.FromSeconds(30);
+
+        // Aktueller AVAS-Status; das Ergebnis wird kurz zwischengespeichert, damit der 2-Sekunden-Timer
+        // nicht permanent über den Stick liest. null = AVAS-Stick nicht eingesteckt oder nicht lesbar.
+        private AvasStatus? GetAvasStatus()
+        {
+            var drive = FindConnectedStick(AvasVolumeLabel);
+            if (drive == null)
+            {
+                _avasStatusCache = null;
+                _avasStatusCacheRoot = null;
+                return null;
+            }
+
+            var root = drive.RootDirectory.FullName;
+            if (_avasStatusCache != null
+                && string.Equals(_avasStatusCacheRoot, root, StringComparison.OrdinalIgnoreCase)
+                && DateTime.Now - _avasStatusCacheTime < AvasStatusCacheLifetime)
+            {
+                return _avasStatusCache;
+            }
+
+            _avasStatusCache = CheckAvasStatus(drive);
+            _avasStatusCacheRoot = root;
+            _avasStatusCacheTime = DateTime.Now;
+            return _avasStatusCache;
+        }
+
+        // Spiegelt die AVAS-eigene Logik: neueste Drivers\SDI_R*.exe (> 150 Tage) und jede Files\*.exe (> 180 Tage).
+        // Fehlende Ordner werden übersprungen – der Stick kann in jedem Zustand sein.
+        private static AvasStatus? CheckAvasStatus(DriveInfo avasDrive)
+        {
+            try
+            {
+                var root = avasDrive.RootDirectory.FullName;
+                var now = DateTime.Now;
+
+                int? sdiAgeDays = null;
+                var driversDir = Path.Combine(root, "Drivers");
+                if (Directory.Exists(driversDir))
+                {
+                    var newestSdi = new DirectoryInfo(driversDir)
+                        .GetFiles("SDI_R*.exe")
+                        .OrderByDescending(f => f.LastWriteTime)
+                        .FirstOrDefault();
+
+                    if (newestSdi != null)
+                        sdiAgeDays = (int)(now - newestSdi.LastWriteTime).TotalDays;
+                }
+
+                var staleCount = 0;
+                var totalCount = 0;
+                var filesDir = Path.Combine(root, "Files");
+                if (Directory.Exists(filesDir))
+                {
+                    foreach (var file in new DirectoryInfo(filesDir).GetFiles("*.exe"))
+                    {
+                        totalCount++;
+                        if ((now - file.LastWriteTime).TotalDays > AvasPackageStaleDays)
+                            staleCount++;
+                    }
+                }
+
+                return new AvasStatus(sdiAgeDays, staleCount, totalCount);
+            }
+            catch
+            {
+                // Stick abgezogen / nicht lesbar – kein Hinweis statt Absturz
+                return null;
+            }
+        }
+
+        private string? _avasTooltipKey;
+
+        // Setzt bzw. entfernt den Warn-Look an der AVAS-Pille (status == null => normaler Zustand)
+        private void ApplyAvasWarnLook(StickIndicator indicator, AvasStatus? status)
+        {
+            if (status == null)
+            {
+                indicator.Pill.Background = (Brush)FindResource("BgDeep");
+                indicator.Pill.BorderBrush = (Brush)FindResource("BorderColor");
+                indicator.Pill.Cursor = null;
+                indicator.Pill.ToolTip = null;
+                indicator.WarnMark.Visibility = Visibility.Collapsed;
+                indicator.Dot.Effect = null;
+                _avasTooltipKey = null;
+                return;
+            }
+
+            indicator.Pill.Background = AvasWarnPillBackgroundBrush;
+            indicator.Pill.BorderBrush = AvasWarnBorderBrush;
+            indicator.Pill.Cursor = System.Windows.Input.Cursors.Hand;
+            indicator.Label.Foreground = AvasWarnValueBrush;
+            indicator.WarnMark.Visibility = Visibility.Visible;
+
+            // weicher Amber-Glow um den Status-Punkt (Entsprechung zu box-shadow 0 0 0 3px rgba(255,176,32,.3))
+            indicator.Dot.Effect ??= new DropShadowEffect
+            {
+                Color = Color.FromRgb(0xFF, 0xB0, 0x20),
+                BlurRadius = 8,
+                ShadowDepth = 0,
+                Opacity = 0.85
+            };
+
+            var key = $"{status.SdiAgeDays}|{status.StaleCount}|{status.TotalCount}|{Loc.Current}";
+            if (_avasTooltipKey != key || indicator.Pill.ToolTip == null)
+            {
+                indicator.Pill.ToolTip = BuildAvasTooltip(status);
+                _avasTooltipKey = key;
+            }
+        }
+
+        // Dunkler Tooltip im Kpmn-Stil, der unter der AVAS-Pille erscheint
+        private ToolTip BuildAvasTooltip(AvasStatus status)
+        {
+            var panel = new StackPanel();
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "⚠ " + Loc.T("Avas.TooltipTitle"),
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = AvasWarnAccentBrush,
+                Margin = new Thickness(0, 0, 0, 7)
+            });
+
+            if (status.SdiAgeDays.HasValue)
+            {
+                panel.Children.Add(BuildAvasTooltipRow(
+                    Loc.T("Avas.TooltipSdiRow"),
+                    status.SdiAgeDays.Value.ToString()));
+            }
+
+            if (status.StaleCount > 0)
+            {
+                panel.Children.Add(BuildAvasTooltipRow(
+                    Loc.T("Avas.TooltipPackagesRow"),
+                    status.StaleCount.ToString(),
+                    status.TotalCount.ToString()));
+            }
+
+            var footer = new TextBlock
+            {
+                Text = Loc.T("Avas.TooltipFooter"),
+                FontSize = 10,
+                Foreground = (Brush)FindResource("TextMuted"),
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            var footerBorder = new Border
+            {
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Margin = new Thickness(0, 8, 0, 0),
+                Padding = new Thickness(0, 7, 0, 0),
+                Child = footer
+            };
+            panel.Children.Add(footerBorder);
+
+            var callout = new Border
+            {
+                Background = AvasTooltipBackgroundBrush,
+                BorderBrush = AvasWarnBorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 10, 12, 10),
+                Child = panel
+            };
+
+            return new ToolTip
+            {
+                Content = callout,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0),
+                HasDropShadow = true,
+                MaxWidth = 360,
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+                VerticalOffset = 6,
+                FontFamily = FontFamily
+            };
+        }
+
+        private TextBlock BuildAvasTooltipRow(string format, params string[] values)
+        {
+            var text = new TextBlock
+            {
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+
+            text.Inlines.Add(new Run("● ") { Foreground = AvasWarnAccentBrush });
+            AddHighlightedInlines(text, format, AvasTooltipTextBrush, AvasWarnValueBrush, values);
+            return text;
+        }
+
+        // Baut einen Format-String ({0}, {1}, ...) als Inlines auf, wobei die eingesetzten Werte hervorgehoben werden
+        private static void AddHighlightedInlines(TextBlock target, string format, Brush normalBrush, Brush valueBrush, params string[] values)
+        {
+            foreach (var part in Regex.Split(format, @"(\{\d+\})"))
+            {
+                if (part.Length == 0)
+                    continue;
+
+                var match = Regex.Match(part, @"^\{(\d+)\}$");
+                if (match.Success && int.TryParse(match.Groups[1].Value, out var index) && index < values.Length)
+                {
+                    target.Inlines.Add(new Run(values[index]) { Foreground = valueBrush, FontWeight = FontWeights.Bold });
+                }
+                else
+                {
+                    target.Inlines.Add(new Run(part) { Foreground = normalBrush });
+                }
+            }
+        }
+
+        // Klick auf die AVAS-Pille: nur im Warnzustand aktiv -> Dokumente-Tab mit AVAS-Ordner öffnen
+        private void AvasPill_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (GetAvasStatus() is not { IsStale: true })
+                return;
+
+            if (TabDokumente.IsChecked != true)
+                TabDokumente.IsChecked = true;
+
+            SelectAvasDocumentFolder();
+        }
+
+        // Wählt den AVAS-Ordner in der Dokumente-Sidebar aus (falls die Sidebar gebaut ist)
+        private void SelectAvasDocumentFolder()
+        {
+            if (_folderList == null || !_folderList.Items.Contains(AvasDocumentFolder))
+                return;
+
+            _folderList.SelectedItem = AvasDocumentFolder;
+        }
+
+        // ---------- Notice-Bar im Dokumente-Tab ----------
+
+        private Border? _avasNoticeBar;
+        private TextBlock? _avasNoticeText;
+        private bool _avasNoticeDismissed;
+        private string? _avasNoticeKey;
+
+        // Kompakte Hinweiszeile über der Dateiliste (Aufbau einmal pro LoadDokumenteTab)
+        private Border BuildAvasNoticeBar()
+        {
+            var grid = new Grid { Margin = new Thickness(9, 7, 9, 7) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var icon = new TextBlock
+            {
+                Text = "⚠",
+                FontSize = 12,
+                Foreground = AvasWarnAccentBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            Grid.SetColumn(icon, 0);
+            grid.Children.Add(icon);
+
+            _avasNoticeText = new TextBlock
+            {
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(_avasNoticeText, 1);
+            grid.Children.Add(_avasNoticeText);
+
+            var dismiss = new TextBlock
+            {
+                Text = "✕",
+                FontSize = 11,
+                Foreground = (Brush)FindResource("TextMuted"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = Loc.T("Avas.NoticeDismiss")
+            };
+            dismiss.MouseLeftButtonUp += (_, _) =>
+            {
+                _avasNoticeDismissed = true;
+                if (_avasNoticeBar != null)
+                    _avasNoticeBar.Visibility = Visibility.Collapsed;
+            };
+            Grid.SetColumn(dismiss, 2);
+            grid.Children.Add(dismiss);
+
+            // linker Akzentstreifen (#FFB020) innerhalb des amber getönten Rahmens
+            var inner = new DockPanel();
+            var accent = new Border { Width = 3, Background = AvasWarnAccentBrush };
+            DockPanel.SetDock(accent, Dock.Left);
+            inner.Children.Add(accent);
+            inner.Children.Add(grid);
+
+            return new Border
+            {
+                Background = AvasNoticeBackgroundBrush,
+                BorderBrush = AvasWarnBorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Margin = new Thickness(14, 0, 14, 8),
+                Visibility = Visibility.Collapsed,
+                Child = inner
+            };
+        }
+
+        private void UpdateAvasNotice() => UpdateAvasNotice(GetAvasStatus());
+
+        // Zeigt die Hinweiszeile nur im Dokumente-Tab, im AVAS-Ordner und solange sie nicht weggeklickt wurde
+        private void UpdateAvasNotice(AvasStatus? status)
+        {
+            if (_avasNoticeBar == null || _avasNoticeText == null)
+                return;
+
+            var show = !_avasNoticeDismissed
+                && TabDokumente.IsChecked == true
+                && string.Equals(_currentFolder, AvasDocumentFolder, StringComparison.OrdinalIgnoreCase)
+                && status is { IsStale: true };
+
+            if (!show)
+            {
+                _avasNoticeBar.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var key = $"{status!.SdiAgeDays}|{status.StaleCount}|{status.TotalCount}|{Loc.Current}";
+            if (_avasNoticeKey != key || _avasNoticeText.Inlines.Count == 0)
+            {
+                _avasNoticeText.Inlines.Clear();
+                _avasNoticeText.Inlines.Add(new Run(Loc.T("Avas.NoticePrefix") + " ")
+                {
+                    Foreground = AvasWarnAccentBrush,
+                    FontWeight = FontWeights.Bold
+                });
+
+                var first = true;
+                if (status.SdiAgeDays.HasValue)
+                {
+                    AddHighlightedInlines(_avasNoticeText, Loc.T("Avas.NoticeSdi"), AvasTooltipTextBrush, AvasWarnValueBrush,
+                        status.SdiAgeDays.Value.ToString());
+                    first = false;
+                }
+
+                if (status.StaleCount > 0)
+                {
+                    if (!first)
+                        _avasNoticeText.Inlines.Add(new Run(" · ") { Foreground = AvasTooltipTextBrush });
+
+                    AddHighlightedInlines(_avasNoticeText, Loc.T("Avas.NoticePackages"), AvasTooltipTextBrush, AvasWarnValueBrush,
+                        status.StaleCount.ToString(), status.TotalCount.ToString());
+                }
+
+                _avasNoticeKey = key;
+            }
+
+            _avasNoticeBar.Visibility = Visibility.Visible;
         }
 
         // Prüft ob die EXE von einem Wechseldatenträger ausgeführt wird
@@ -407,6 +835,9 @@ namespace AEGIS
         private void LoadDokumenteTab()
         {
             ContentArea.Children.Clear();
+            _avasNoticeBar = null;
+            _avasNoticeText = null;
+            _avasNoticeKey = null;
 
             if (!_isRunningFromUsbStick)
             {
@@ -494,6 +925,11 @@ namespace AEGIS
             DockPanel.SetDock(_fileToolbar, Dock.Top);
             fileStack.Children.Add(_fileToolbar);
 
+            // AVAS-Wartungshinweis direkt über der Dateiliste (nur sichtbar im AVAS-Ordner bei veraltetem Stick)
+            _avasNoticeBar = BuildAvasNoticeBar();
+            DockPanel.SetDock(_avasNoticeBar, Dock.Top);
+            fileStack.Children.Add(_avasNoticeBar);
+
             _fileList = new ListBox
             {
                 Background = Brushes.Transparent,
@@ -544,6 +980,7 @@ namespace AEGIS
 
             _currentFolder = folderName;
             ShowEmptyPreview(Loc.T("Dokumente.SelectFileHint"));
+            UpdateAvasNotice();
 
             if (StickFolderMap.TryGetValue(folderName, out var stick))
             {

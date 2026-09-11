@@ -4,6 +4,6 @@ obj/
 *.user
 *.suo
 
-# Claude Code local files — not meant for the public repo
+# Claude Code local files and design mockups — not meant for the public repo
 .claude/
-aegis_mockup_v2.html
+*mockup*.html

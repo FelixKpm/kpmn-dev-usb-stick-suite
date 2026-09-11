@@ -235,6 +235,16 @@ namespace AEGIS
             ["BackupEntry.HoursAgo"] = "vor {0} Std.",
             ["BackupEntry.DaysAgo"] = "vor {0} Tag(en)",
 
+            // AVAS-Wartungshinweis (Reminder-Passthrough)
+            ["Avas.TooltipTitle"] = "AVAS – WARTUNG FÄLLIG",
+            ["Avas.TooltipSdiRow"] = "SDI-Datenbank: {0} Tage alt — Update empfohlen",
+            ["Avas.TooltipPackagesRow"] = "{0} von {1} Paketen veraltet (> 180 Tage)",
+            ["Avas.TooltipFooter"] = "Klicken → AVAS-Ordner im Dokumente-Tab öffnen",
+            ["Avas.NoticePrefix"] = "AVAS:",
+            ["Avas.NoticeSdi"] = "SDI-Datenbank {0} Tage alt — Update empfohlen",
+            ["Avas.NoticePackages"] = "{0} von {1} Paketen veraltet",
+            ["Avas.NoticeDismiss"] = "Hinweis ausblenden",
+
             // Standardordner-Namen (Nutzerdaten-Backup Checkboxen)
             ["Folder.Desktop"] = "Desktop",
             ["Folder.Documents"] = "Dokumente",
@@ -395,6 +405,16 @@ namespace AEGIS
             ["BackupEntry.MinutesAgo"] = "{0} min. ago",
             ["BackupEntry.HoursAgo"] = "{0} hr. ago",
             ["BackupEntry.DaysAgo"] = "{0} day(s) ago",
+
+            // AVAS maintenance reminder (passthrough)
+            ["Avas.TooltipTitle"] = "AVAS – MAINTENANCE DUE",
+            ["Avas.TooltipSdiRow"] = "SDI database: {0} days old — update recommended",
+            ["Avas.TooltipPackagesRow"] = "{0} of {1} packages outdated (> 180 days)",
+            ["Avas.TooltipFooter"] = "Click → open the AVAS folder in the Documents tab",
+            ["Avas.NoticePrefix"] = "AVAS:",
+            ["Avas.NoticeSdi"] = "SDI database {0} days old — update recommended",
+            ["Avas.NoticePackages"] = "{0} of {1} packages outdated",
+            ["Avas.NoticeDismiss"] = "Hide notice",
 
             // Standard folder names (user-data backup checkboxes)
             ["Folder.Desktop"] = "Desktop",
