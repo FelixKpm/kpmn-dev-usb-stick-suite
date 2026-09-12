@@ -3196,8 +3196,8 @@ namespace AEGIS
                 }
             });
 
-            // Nach einem erfolgreichen AVAS-Build folgt der optionale Treiber-Datenbank-Schritt.
-            // Der Dialog wird erst nach dem finally-Block gezeigt, damit die Karte vorher wieder freigegeben ist.
+            // Nach einem erfolgreichen AVAS-Build folgen die optionalen Schritte Treiber-Datenbank und Software-Pakete.
+            // Die Dialoge werden erst nach dem finally-Block gezeigt, damit die Karte vorher wieder freigegeben ist.
             var offerDriverSetup = false;
 
             try
@@ -3255,7 +3255,12 @@ namespace AEGIS
             }
 
             if (offerDriverSetup)
+            {
                 ShowDriverDatabaseSetupDialog(drive.Root);
+
+                // zweiter, davon unabhängiger Schritt: die Installer für AVAS' Ordner "Files" holen
+                ShowPackageDownloadSetupDialog(drive.Root);
+            }
         }
 
         // ----- MABS-Stick bauen (Ventoy-Installation + Kpmn-Theme) -----
@@ -3375,11 +3380,23 @@ namespace AEGIS
                 var themeTarget = await FindVentoyDataDriveAsync(drive.Root);
                 if (themeTarget == null)
                 {
-                    // Ventoy selbst ist durch – nur das Theme fehlt, und das ist rein kosmetisch
+                    // Ventoy selbst ist durch – nur das Theme fehlt, und das ist rein kosmetisch.
+                    // Die Bezeichnung trotzdem versuchen: Windows behält meist denselben Laufwerksbuchstaben,
+                    // also trifft drive.Root oft auch nach dem Partitionieren noch die Datenpartition.
+                    var fallbackLabelError = await Task.Run(() => TrySetVolumeLabel(drive.Root, MabsSuiteRepo));
+
                     statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.DoneNoTheme"), drive.Root) + " " + Loc.T("SuiteBuilder.Mabs.IsoHint");
+                    if (fallbackLabelError != null)
+                        statusText.Text += " " + string.Format(Loc.T("SuiteBuilder.Mabs.LabelFailed"), fallbackLabelError);
+
                     StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusDone"), drive.Root);
                     return;
                 }
+
+                // Bezeichnung vor dem Theme setzen: ohne "MABS" erkennt AEGIS den Stick später nicht,
+                // das Theme ist dagegen nur Kosmetik und darf die Umbenennung nicht blockieren
+                statusText.Text = Loc.T("SuiteBuilder.Mabs.StageSettingLabel");
+                var labelError = await Task.Run(() => TrySetVolumeLabel(themeTarget, MabsSuiteRepo));
 
                 statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDownloadingTheme"), 0, FormatBytes(0), FormatBytes(0));
                 await GiteaService.DownloadRepoArchiveAsync(_giteaSettings, MabsSuiteRepo, tempZip, themeDownloadProgress);
@@ -3389,6 +3406,9 @@ namespace AEGIS
                 await Task.Run(() => DeployMabsTheme(tempZip, tempExtractDir, themeTarget));
 
                 statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Done"), themeTarget) + " " + Loc.T("SuiteBuilder.Mabs.IsoHint");
+                if (labelError != null)
+                    statusText.Text += " " + string.Format(Loc.T("SuiteBuilder.Mabs.LabelFailed"), labelError);
+
                 StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusDone"), themeTarget);
             }
             catch (Exception ex)
@@ -3498,21 +3518,26 @@ namespace AEGIS
         private const string IntelWirelessDownloadUrl =
             "https://www.intel.com/content/www/us/en/download/19351/intel-wireless-wi-fi-drivers-for-windows-10-and-windows-11.html";
 
+        // Der eigentliche Treiber-Scanner, den AVAS in "Drivers" als SDI*.exe sucht und startet.
+        // Das ursprüngliche "Snappy Driver Installer" ist tot (seit 2017), gepflegt wird heute der Fork
+        // SDIO (Snappy Driver Installer Origin) von Glenn Delahoy. Es gibt keine feste "latest"-URL,
+        // deshalb wird der aktuelle ZIP-Link live aus der offiziellen Seite gefischt.
+        private const string SdioPageUrl = "https://www.glenn.delahoy.com/snappy-driver-installer-origin/";
+        private const string SdioBaseUrl = "https://www.glenn.delahoy.com";
+
+        // Der erste Treffer auf der Seite ist die aktuelle Version (ältere Versionen stehen weiter unten).
+        private static readonly Regex SdioZipLinkRegex =
+            new(@"/downloads/sdio/SDIO_[0-9.]+\.zip", RegexOptions.IgnoreCase);
+
+        // Aus dem ZIP wird ausschließlich das 64-Bit-Hauptprogramm übernommen (z. B. SDIO_x64_R887.exe).
+        // Bewusst streng: SDIO-XP_x64_R*.exe, SDIO_R*.exe (32 Bit) und SDIOTranslationTool.exe fallen hier raus.
+        private static readonly Regex SdioMainExeRegex =
+            new(@"^SDIO_x64_R\d+\.exe$", RegexOptions.IgnoreCase);
+
         private const string AvasSuiteRepo = "AVAS";
         private const string DriversFolderName = "Drivers";
         private const string IntelEthernetFolderName = "Intel-Ethernet";
-
-        // Eigener HttpClient für Nicht-Gitea-Downloads (Intel), bewusst eine wiederverwendete Instanz.
-        // Intels Server liefert ohne User-Agent-Header ein 403 Forbidden zurück, daher explizit gesetzt.
-        private static readonly System.Net.Http.HttpClient DriverHttp = CreateDriverHttpClient();
-
-        private static System.Net.Http.HttpClient CreateDriverHttpClient()
-        {
-            var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(60) };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            return client;
-        }
+        private const string FilesFolderName = "Files";
 
         // Themed Folgedialog nach einem erfolgreichen AVAS-Build: vollständige Offline-Datenbank vs. Lite.
         // Jederzeit abbrechbar – das ist eine optionale Hilfestellung, keine Pflichtentscheidung.
@@ -3594,6 +3619,11 @@ namespace AEGIS
 
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullHeading"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
             panel.Children.Add(CreateDriverFolderResultText(driversFolder));
+
+            // Das Scanner-Programm selbst wird unabhängig von der Datenbank-Variante immer geholt –
+            // ohne SDI*.exe im Ordner "Drivers" überspringt AVAS den Treiberschritt kommentarlos.
+            panel.Children.Add(BuildSdiToolSection(driversFolder, ct));
+
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSteps"), "TextMuted", 12, new Thickness(0, 0, 0, 14)));
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSourceLabel"), "TextMuted", 11, new Thickness(0, 0, 0, 4)));
             panel.Children.Add(CreateDialogHyperlink(SdiFullDatabaseUrl, 12, new Thickness(0, 0, 0, 18)));
@@ -3611,6 +3641,10 @@ namespace AEGIS
 
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.LiteHeading"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
             panel.Children.Add(CreateDriverFolderResultText(driversFolder));
+
+            // Siehe Full-Ansicht: der Scanner gehört in beide Varianten, die Offline-Datenbank ist davon unabhängig.
+            panel.Children.Add(BuildSdiToolSection(driversFolder, ct));
+
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.IntelDescription"), "TextMuted", 12, new Thickness(0, 0, 0, 12)));
 
             var downloadButton = new Button
@@ -3771,6 +3805,167 @@ namespace AEGIS
             return textBlock;
         }
 
+        // Eigener Block für den Treiber-Scanner (SDIO) in beiden Detailansichten des Treiber-Dialogs.
+        // Startet den Download sofort, wenn im Ordner "Drivers" noch kein passendes Programm liegt –
+        // er ist klein (~12 MB) und ohne ihn ist der ganze Treiberschritt auf dem Stick wirkungslos.
+        private Border BuildSdiToolSection(string driversFolder, System.Threading.CancellationToken ct)
+        {
+            var stack = new StackPanel();
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.SdiToolHeading"), "TextPrimary", 13, new Thickness(0, 0, 0, 6), bold: true));
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.SdiToolDescription"), "TextMuted", 11, new Thickness(0, 0, 0, 8)));
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap
+            };
+            stack.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            stack.Children.Add(progress);
+
+            var retryButton = new Button
+            {
+                Content = Loc.T("DriverSetup.SdiToolRetryButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 10, 0, 0),
+                Visibility = Visibility.Collapsed
+            };
+            retryButton.Click += (_, _) => _ = DownloadSdiToolAsync(driversFolder, retryButton, progress, statusText, ct);
+            stack.Children.Add(retryButton);
+
+            var existing = FindExistingSdiTool(driversFolder);
+            if (existing != null)
+            {
+                statusText.Text = string.Format(Loc.T("DriverSetup.SdiToolAlreadyPresent"), Path.GetFileName(existing));
+                retryButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                _ = DownloadSdiToolAsync(driversFolder, retryButton, progress, statusText, ct);
+            }
+
+            return new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 14),
+                Child = stack
+            };
+        }
+
+        // Liegt im Ordner "Drivers" schon ein SDIO-Hauptprogramm? Dann nicht erneut laden.
+        private static string? FindExistingSdiTool(string driversFolder)
+        {
+            try
+            {
+                if (!Directory.Exists(driversFolder))
+                    return null;
+
+                return Directory.EnumerateFiles(driversFolder, "*.exe", SearchOption.TopDirectoryOnly)
+                    .FirstOrDefault(f => SdioMainExeRegex.IsMatch(Path.GetFileName(f)));
+            }
+            catch { return null; }
+        }
+
+        // Holt SDIO von der offiziellen Seite, entpackt es im Temp-Ordner und kopiert nur das
+        // 64-Bit-Hauptprogramm nach Drivers\. Der Dateiname bleibt unverändert – er beginnt mit "SDI",
+        // damit passt er auf AVAS' bestehende Suche nach SDI*.exe ohne Umbenennen.
+        // Best effort: schlägt das fehl, blockiert es den restlichen Treiber-Dialog nicht.
+        private async Task DownloadSdiToolAsync(
+            string driversFolder, Button retryButton, ProgressBar progress, TextBlock statusText, System.Threading.CancellationToken ct)
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "AEGIS-SDIO-" + Guid.NewGuid().ToString("N"));
+            var zipFile = Path.Combine(tempRoot, "SDIO.zip");
+            var extractFolder = Path.Combine(tempRoot, "extract");
+
+            retryButton.IsEnabled = false;
+            retryButton.Visibility = Visibility.Collapsed;
+            statusText.Foreground = (Brush)FindResource("TextSecondary");
+
+            progress.IsIndeterminate = true;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.Visibility = Visibility.Visible;
+
+            IProgress<(long BytesRead, long TotalBytes)> downloadProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)Math.Min(100, p.BytesRead * 100 / p.TotalBytes);
+                    progress.IsIndeterminate = false;
+                    progress.Value = percent;
+                    statusText.Text = string.Format(
+                        Loc.T("DriverSetup.SdiToolDownloading"), percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+                }
+                else
+                {
+                    progress.IsIndeterminate = true;
+                    statusText.Text = string.Format(Loc.T("DriverSetup.SdiToolDownloadingUnknownSize"), FormatBytes(p.BytesRead));
+                }
+            });
+
+            try
+            {
+                Directory.CreateDirectory(driversFolder);
+
+                statusText.Text = Loc.T("DriverSetup.SdiToolResolving");
+                var html = await PackageDownloadService.Http.GetStringAsync(SdioPageUrl, ct);
+
+                var link = SdioZipLinkRegex.Match(html);
+                if (!link.Success)
+                    throw new InvalidOperationException(Loc.T("DriverSetup.SdiToolNoLinkFound"));
+
+                Directory.CreateDirectory(tempRoot);
+                await DownloadFileWithProgressAsync(SdioBaseUrl + link.Value, zipFile, downloadProgress, ct);
+
+                progress.IsIndeterminate = true;
+                statusText.Text = Loc.T("DriverSetup.SdiToolExtracting");
+                await Task.Run(() => ZipFile.ExtractToDirectory(zipFile, extractFolder, overwriteFiles: true), ct);
+
+                var sourceExe = Directory.EnumerateFiles(extractFolder, "*.exe", SearchOption.AllDirectories)
+                    .FirstOrDefault(f => SdioMainExeRegex.IsMatch(Path.GetFileName(f)));
+
+                if (sourceExe == null)
+                    throw new InvalidOperationException(Loc.T("DriverSetup.SdiToolNoExeFound"));
+
+                var fileName = Path.GetFileName(sourceExe);
+                var targetExe = Path.Combine(driversFolder, fileName);
+                await Task.Run(() => File.Copy(sourceExe, targetExe, overwrite: true), ct);
+
+                statusText.Text = string.Format(Loc.T("DriverSetup.SdiToolDone"), fileName, driversFolder);
+                StatusLeft.Text = string.Format(Loc.T("DriverSetup.StatusSdiTool"), fileName);
+            }
+            catch (OperationCanceledException)
+            {
+                statusText.Text = Loc.T("DriverSetup.SdiToolCancelled");
+            }
+            catch (Exception ex)
+            {
+                statusText.Foreground = Brushes.IndianRed;
+                statusText.Text = string.Format(Loc.T("DriverSetup.SdiToolError"), ex.Message);
+            }
+            finally
+            {
+                TryDeleteTempFolder(tempRoot);
+                progress.Visibility = Visibility.Collapsed;
+                progress.IsIndeterminate = true;
+                retryButton.IsEnabled = true;
+                retryButton.Visibility = Visibility.Visible;
+            }
+        }
+
+        // Temporären Entpack-Ordner samt ZIP wegräumen (Fehler dabei sind egal – Windows räumt Temp ohnehin auf)
+        private static void TryDeleteTempFolder(string folder)
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { }
+        }
+
         // Lädt das Intel-Ethernet-Paket nach Drivers\Intel-Ethernet\ und entpackt es dort.
         // Fortschrittsanzeige wie beim Release-Download im Suite-Builder.
         private async Task DownloadIntelEthernetPackAsync(
@@ -3849,42 +4044,344 @@ namespace AEGIS
             try { if (File.Exists(file)) File.Delete(file); } catch { }
         }
 
-        // Wie GiteaService.DownloadAssetAsync, nur ohne Token/Gitea-spezifische URL-Korrektur:
-        // gestückeltes Lesen mit Fortschrittsmeldung alle ~256 KB.
-        private static async Task DownloadFileWithProgressAsync(
+        // Wie GiteaService.DownloadAssetAsync, nur ohne Token/Gitea-spezifische URL-Korrektur.
+        // Die Schleife selbst liegt in PackageDownloadService, damit es sie im Projekt nur einmal gibt –
+        // dort steckt auch der HttpClient mit User-Agent (Intel antwortet ohne ihn mit 403, GitHub ebenso).
+        private static Task DownloadFileWithProgressAsync(
             string url,
             string targetFile,
             IProgress<(long BytesRead, long TotalBytes)>? progress,
             System.Threading.CancellationToken ct)
+            => PackageDownloadService.DownloadToFileAsync(url, targetFile, progress, ct);
+
+        // ----- Software-Pakete nach einem AVAS-Build -----
+
+        // Zweiter, vom Treiber-Dialog unabhängiger Folgeschritt: die Installer, die packages.json auf dem
+        // Stick im Ordner "Files" erwartet, direkt beim jeweiligen Hersteller holen. Auch das ist optional –
+        // AVAS meldet fehlende Dateien beim Installieren nur als überspringbaren Fehler.
+        private void ShowPackageDownloadSetupDialog(string driveRoot)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+            var filesFolder = Path.Combine(driveRoot, FilesFolderName);
+            var packages = PackageDownloadService.AllPackages;
 
-            using var response = await DriverHttp.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-
-            var total = response.Content.Headers.ContentLength ?? 0;
-
-            using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var target = new FileStream(targetFile, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-
-            var buffer = new byte[81920];
-            long readTotal = 0;
-            long lastReported = 0;
-            int read;
-
-            while ((read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false)) > 0)
+            var win = new Window
             {
-                await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                readTotal += read;
+                Title = Loc.T("PackageSetup.Title"),
+                Width = 620,
+                MaxHeight = 720,
+                SizeToContent = SizeToContent.Height,
+                WindowStyle = WindowStyle.ToolWindow,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = (Brush)FindResource("BgPrimary"),
+                FontFamily = FontFamily
+            };
 
-                if (progress != null && readTotal - lastReported >= 262144)
+            // Beim Schließen des Fensters laufende Downloads abbrechen, statt sie ins Leere weiterlaufen zu lassen
+            var cts = new System.Threading.CancellationTokenSource();
+            win.Closed += (_, _) => { try { cts.Cancel(); } catch { } };
+
+            var panel = new StackPanel { Margin = new Thickness(20) };
+            win.Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            };
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("PackageSetup.Title"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("PackageSetup.Intro"), "TextMuted", 12, new Thickness(0, 0, 0, 12)));
+            panel.Children.Add(CreatePackageFolderResultText(filesFolder));
+
+            // Liste der Pakete: Name, Zieldateiname und ein Statusfeld, das der Download-Lauf fortschreibt
+            var listStack = new StackPanel();
+            var packageStates = new List<TextBlock>();
+
+            foreach (var package in packages)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var nameText = CreateDialogTextBlock(package.Name, "TextPrimary", 12, new Thickness(0));
+
+                // Brave ist als Einziges ein Online-Stub statt eines vollständigen Offline-Installers –
+                // das steht als Info-Symbol mit Tooltip direkt neben dem Namen, nicht als Fließtext.
+                if (package.TargetFileName.Equals("brave_setup.exe", StringComparison.OrdinalIgnoreCase))
                 {
-                    lastReported = readTotal;
-                    progress.Report((readTotal, total));
+                    var nameRow = new StackPanel { Orientation = Orientation.Horizontal };
+                    nameRow.Children.Add(nameText);
+                    nameRow.Children.Add(CreatePackageInfoIcon(Loc.T("PackageSetup.BraveStubHint")));
+                    Grid.SetColumn(nameRow, 0);
+                    row.Children.Add(nameRow);
+                }
+                else
+                {
+                    Grid.SetColumn(nameText, 0);
+                    row.Children.Add(nameText);
+                }
+
+                var fileText = CreateDialogTextBlock(package.TargetFileName, "TextMuted", 11, new Thickness(0));
+                Grid.SetColumn(fileText, 1);
+                row.Children.Add(fileText);
+
+                var stateText = CreateDialogTextBlock(Loc.T("PackageSetup.StatePending"), "TextMuted", 11, new Thickness(0));
+                Grid.SetColumn(stateText, 2);
+                row.Children.Add(stateText);
+
+                packageStates.Add(stateText);
+                listStack.Children.Add(row);
+            }
+
+            panel.Children.Add(new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = listStack
+            });
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("PackageSetup.ChromeNote"), "TextMuted", 11, new Thickness(0, 0, 0, 14)));
+
+            var downloadButton = new Button
+            {
+                Content = Loc.T("PackageSetup.DownloadAllButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            panel.Children.Add(downloadButton);
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            panel.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            panel.Children.Add(progress);
+
+            var summaryText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            panel.Children.Add(summaryText);
+
+            downloadButton.Click += (_, _) => _ = DownloadAllPackagesAsync(
+                filesFolder, downloadButton, progress, statusText, summaryText, packageStates, cts.Token);
+
+            var footer = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 18, 0, 0)
+            };
+            var closeButton = new Button
+            {
+                Content = Loc.T("PackageSetup.Close"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                IsCancel = true
+            };
+            closeButton.Click += (_, _) => win.Close();
+            footer.Children.Add(closeButton);
+            panel.Children.Add(footer);
+
+            win.ShowDialog();
+        }
+
+        // Legt Files\ auf dem Stick an und meldet Erfolg bzw. Fehler als Text zurück
+        private TextBlock CreatePackageFolderResultText(string filesFolder)
+        {
+            try
+            {
+                Directory.CreateDirectory(filesFolder);
+                StatusLeft.Text = string.Format(Loc.T("PackageSetup.StatusFolderCreated"), filesFolder);
+                return CreateDialogTextBlock(
+                    string.Format(Loc.T("PackageSetup.FolderCreated"), filesFolder),
+                    "TextSecondary", 12, new Thickness(0, 0, 0, 14));
+            }
+            catch (Exception ex)
+            {
+                var block = CreateDialogTextBlock(
+                    string.Format(Loc.T("PackageSetup.FolderError"), filesFolder, ex.Message),
+                    "TextSecondary", 12, new Thickness(0, 0, 0, 14));
+                block.Foreground = Brushes.IndianRed;
+                return block;
+            }
+        }
+
+        // Kleines "ⓘ" neben einem Paketnamen, das den übergebenen Hinweis beim Hovern als Tooltip zeigt
+        private TextBlock CreatePackageInfoIcon(string hint)
+        {
+            var icon = new TextBlock
+            {
+                Text = "ⓘ",
+                Foreground = (Brush)FindResource("AccentBlue"),
+                FontSize = 11,
+                Margin = new Thickness(5, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = System.Windows.Input.Cursors.Help
+            };
+
+            var hintText = new TextBlock
+            {
+                Text = hint,
+                Foreground = (Brush)FindResource("TextPrimary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            var callout = new Border
+            {
+                Background = (Brush)FindResource("BgSurface"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 10, 12, 10),
+                Child = hintText
+            };
+
+            icon.ToolTip = new ToolTip
+            {
+                Content = callout,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0),
+                HasDropShadow = true,
+                MaxWidth = 340,
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+                VerticalOffset = 6,
+                FontFamily = FontFamily
+            };
+
+            return icon;
+        }
+
+        // Lädt alle Pakete nacheinander (nicht parallel – ein Hersteller-CDN nach dem anderen reicht völlig
+        // und hält die Fortschrittsanzeige einfach). Ein Fehlschlag stoppt den Durchlauf nicht.
+        private async Task DownloadAllPackagesAsync(
+            string filesFolder,
+            Button downloadButton,
+            ProgressBar progress,
+            TextBlock statusText,
+            TextBlock summaryText,
+            IReadOnlyList<TextBlock> packageStates,
+            System.Threading.CancellationToken ct)
+        {
+            var packages = PackageDownloadService.AllPackages;
+
+            downloadButton.IsEnabled = false;
+            progress.IsIndeterminate = false;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.Visibility = Visibility.Visible;
+
+            summaryText.Text = "";
+            summaryText.Foreground = (Brush)FindResource("TextSecondary");
+
+            StatusLeft.Text = string.Format(Loc.T("PackageSetup.StatusDownloading"), filesFolder);
+
+            var failures = new List<string>();
+            var succeeded = 0;
+            var cancelled = false;
+
+            for (var i = 0; i < packages.Count; i++)
+            {
+                var package = packages[i];
+                var position = i + 1;
+                var state = packageStates[i];
+
+                state.Foreground = (Brush)FindResource("TextSecondary");
+                state.Text = string.Format(Loc.T("PackageSetup.StateDownloading"), 0);
+                statusText.Text = string.Format(
+                    Loc.T("PackageSetup.Progress"), package.Name, position, packages.Count, 0, FormatBytes(0), FormatBytes(0));
+
+                IProgress<(long BytesRead, long TotalBytes)> packageProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+                {
+                    if (p.TotalBytes > 0)
+                    {
+                        var percent = (int)Math.Min(100, p.BytesRead * 100 / p.TotalBytes);
+                        state.Text = string.Format(Loc.T("PackageSetup.StateDownloading"), percent);
+                        statusText.Text = string.Format(
+                            Loc.T("PackageSetup.Progress"), package.Name, position, packages.Count, percent,
+                            FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+
+                        // Gesamtbalken: abgeschlossene Pakete plus Fortschritt im aktuellen Paket
+                        progress.IsIndeterminate = false;
+                        progress.Value = Math.Min(100, (i * 100 + percent) / (double)packages.Count);
+                    }
+                    else
+                    {
+                        // manche Hersteller-CDNs liefern keine Content-Length (gechunkte Antwort)
+                        state.Text = FormatBytes(p.BytesRead);
+                        statusText.Text = string.Format(
+                            Loc.T("PackageSetup.ProgressUnknownSize"), package.Name, position, packages.Count, FormatBytes(p.BytesRead));
+                        progress.IsIndeterminate = true;
+                    }
+                });
+
+                try
+                {
+                    var result = await PackageDownloadService.DownloadPackageAsync(package, filesFolder, packageProgress, ct);
+
+                    if (result.Success)
+                    {
+                        succeeded++;
+                        state.Foreground = (Brush)FindResource("TextSecondary");
+                        state.Text = Loc.T("PackageSetup.StateDone");
+                    }
+                    else
+                    {
+                        var error = result.Error ?? "";
+                        failures.Add(string.Format(Loc.T("PackageSetup.FailureItem"), package.Name, error));
+                        state.Foreground = Brushes.IndianRed;
+                        state.Text = string.Format(Loc.T("PackageSetup.StateFailed"), error);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                    state.Foreground = (Brush)FindResource("TextMuted");
+                    state.Text = Loc.T("PackageSetup.StateCancelled");
+                    break;
                 }
             }
 
-            progress?.Report((readTotal, total));
+            progress.IsIndeterminate = false;
+            progress.Value = 100;
+            progress.Visibility = Visibility.Collapsed;
+            progress.IsIndeterminate = true;
+            statusText.Text = "";
+            downloadButton.IsEnabled = true;
+
+            if (cancelled)
+            {
+                summaryText.Text = string.Format(Loc.T("PackageSetup.SummaryCancelled"), succeeded, packages.Count);
+                StatusLeft.Text = string.Format(Loc.T("PackageSetup.StatusCancelled"), succeeded, packages.Count);
+                return;
+            }
+
+            if (failures.Count == 0)
+            {
+                summaryText.Text = string.Format(Loc.T("PackageSetup.SummaryAllOk"), packages.Count, filesFolder);
+            }
+            else
+            {
+                summaryText.Foreground = Brushes.IndianRed;
+                summaryText.Text = string.Format(
+                    Loc.T("PackageSetup.SummaryPartial"), succeeded, packages.Count, string.Join("; ", failures));
+            }
+
+            StatusLeft.Text = string.Format(Loc.T("PackageSetup.StatusDone"), succeeded, packages.Count, filesFolder);
         }
 
         // Löscht alle Dateien und Ordner im Wurzelverzeichnis des Laufwerks.
