@@ -301,6 +301,7 @@ namespace AEGIS
             ["DriverSetup.ManualHint"] = "Empfehlung: Ergänze zusätzlich Treiber für weitere gängige Chipsätze von Hand. Lade sie bei den Herstellern herunter und lege sie ebenfalls im Ordner \"Drivers\" auf dem Stick ab:",
             ["DriverSetup.ManualRealtekLabel"] = "Realtek (LAN/WLAN):",
             ["DriverSetup.ManualIntelWlanLabel"] = "Intel Wireless/WLAN:",
+            ["DriverSetup.ErrorOpeningLink"] = "~/aegis $  Link konnte nicht geöffnet werden: {0}",
             ["DriverSetup.StatusFolderCreated"] = "~/aegis $  Treiber-Ordner angelegt: {0}",
             ["DriverSetup.StatusDone"] = "~/aegis $  Intel-Ethernet-Treiber entpackt nach {0}",
 
@@ -550,6 +551,7 @@ namespace AEGIS
             ["DriverSetup.ManualHint"] = "Recommendation: additionally add drivers for other common chipsets manually. Download them from the vendors and place them into the same \"Drivers\" folder on the stick:",
             ["DriverSetup.ManualRealtekLabel"] = "Realtek (LAN/WLAN):",
             ["DriverSetup.ManualIntelWlanLabel"] = "Intel Wireless/WLAN:",
+            ["DriverSetup.ErrorOpeningLink"] = "~/aegis $  Could not open link: {0}",
             ["DriverSetup.StatusFolderCreated"] = "~/aegis $  Driver folder created: {0}",
             ["DriverSetup.StatusDone"] = "~/aegis $  Intel Ethernet drivers extracted to {0}",
 

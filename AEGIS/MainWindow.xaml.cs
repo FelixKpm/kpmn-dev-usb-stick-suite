@@ -3307,7 +3307,7 @@ namespace AEGIS
             panel.Children.Add(CreateDriverFolderResultText(driversFolder));
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSteps"), "TextMuted", 12, new Thickness(0, 0, 0, 14)));
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSourceLabel"), "TextMuted", 11, new Thickness(0, 0, 0, 4)));
-            panel.Children.Add(CreateDialogTextBlock(SdiFullDatabaseUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 18)));
+            panel.Children.Add(CreateDialogHyperlink(SdiFullDatabaseUrl, 12, new Thickness(0, 0, 0, 18)));
 
             panel.Children.Add(BuildDriverSetupFooter(win, host, driversFolder, ct));
 
@@ -3350,10 +3350,10 @@ namespace AEGIS
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualHint"), "TextMuted", 12, new Thickness(0, 18, 0, 10)));
 
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualRealtekLabel"), "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
-            panel.Children.Add(CreateDialogTextBlock(RealtekDownloadUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 10)));
+            panel.Children.Add(CreateDialogHyperlink(RealtekDownloadUrl, 12, new Thickness(0, 0, 0, 10)));
 
             panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualIntelWlanLabel"), "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
-            panel.Children.Add(CreateDialogTextBlock(IntelWirelessDownloadUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 18)));
+            panel.Children.Add(CreateDialogHyperlink(IntelWirelessDownloadUrl, 12, new Thickness(0, 0, 0, 18)));
 
             panel.Children.Add(BuildDriverSetupFooter(win, host, driversFolder, ct));
 
@@ -3448,6 +3448,38 @@ namespace AEGIS
                 TextWrapping = TextWrapping.Wrap,
                 Margin = margin
             };
+        }
+
+        // Klickbarer Link, der die URL im Standardbrowser öffnet (Fehler beim Öffnen wird nur im Statusbereich vermerkt, kein Absturz)
+        private TextBlock CreateDialogHyperlink(string url, double fontSize, Thickness margin)
+        {
+            var link = new Hyperlink(new Run(url))
+            {
+                NavigateUri = new Uri(url),
+                Foreground = (Brush)FindResource("AccentBlue")
+            };
+            link.RequestNavigate += (_, e) =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    StatusLeft.Text = string.Format(Loc.T("DriverSetup.ErrorOpeningLink"), ex.Message);
+                }
+                e.Handled = true;
+            };
+
+            var textBlock = new TextBlock
+            {
+                FontSize = fontSize,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = margin,
+                Cursor = System.Windows.Input.Cursors.Hand
+            };
+            textBlock.Inlines.Add(link);
+            return textBlock;
         }
 
         // Lädt das Intel-Ethernet-Paket nach Drivers\Intel-Ethernet\ und entpackt es dort.
