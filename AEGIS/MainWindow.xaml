@@ -171,6 +171,7 @@
                 <RadioButton x:Name="TabTemplates" Content="Templates" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
                 <RadioButton x:Name="TabVault" Content="Vault" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
                 <RadioButton x:Name="TabBackups" Content="Geräte Backups" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
+                <RadioButton x:Name="TabSuiteBuilder" Content="Suite Builder" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
             </StackPanel>
         </Border>
 

@@ -200,6 +200,7 @@ namespace AEGIS
             TabTemplates.Content = Loc.T("Tab.Templates");
             TabVault.Content = Loc.T("Tab.Vault");
             TabBackups.Content = Loc.T("Tab.Backups");
+            TabSuiteBuilder.Content = Loc.T("Tab.SuiteBuilder");
 
             // Immer vom festen Basistext ausgehen, damit sich das Build-Datum bei Sprachwechseln nicht mehrfach anhängt
             var versionText = AppVersionBaseText;
@@ -243,6 +244,7 @@ namespace AEGIS
             else if (TabVault.IsChecked == true) LoadVaultTab();
             else if (TabTemplates.IsChecked == true) LoadTemplatesTab();
             else if (TabBackups.IsChecked == true) LoadBackupsTab();
+            else if (TabSuiteBuilder.IsChecked == true) LoadSuiteBuilderTab();
 
             // Tooltip/Hinweiszeile der AVAS-Pille sofort in der neuen Sprache neu aufbauen
             if (_stickIndicators.Count > 0)
@@ -771,6 +773,9 @@ namespace AEGIS
                     break;
                 case "TabBackups":
                     LoadBackupsTab();
+                    break;
+                case "TabSuiteBuilder":
+                    LoadSuiteBuilderTab();
                     break;
                 default:
                     var placeholder = new TextBlock
@@ -2627,6 +2632,1015 @@ namespace AEGIS
                 _networkBackupButton.IsEnabled = true;
                 RefreshBackupsOverview();
             }
+        }
+
+        // ===================== SUITE BUILDER TAB =====================
+
+        // Repos der Kpmn-Suite, die der Builder aktuell bauen kann.
+        // MABS fehlt bewusst: dieser Stick wird mit Ventoy formatiert und ist ein eigener, riskanterer Schritt.
+        private static readonly string[] SuiteBuilderRepos = { "AVAS", "DART" };
+
+        private readonly string _suiteBuilderTempDir = Path.Combine(Path.GetTempPath(), "AEGIS-SuiteBuilder");
+        private GiteaSettings _giteaSettings = new();
+        private readonly List<SuiteBuildCard> _suiteBuildCards = new();
+
+        // Zählt Tab-Neuaufbauten mit, damit späte Antworten alter Release-Abfragen keine neue UI mehr überschreiben
+        private int _suiteBuilderGeneration;
+
+        // Ein Ziel-Laufwerk im "Ziel-Laufwerk"-Dropdown
+        private sealed class SuiteDriveOption
+        {
+            public string Root { get; }
+
+            // Echte Datenträgerbezeichnung (kann leer sein) – Grundlage für Update- vs. Neubau-Erkennung
+            public string RawLabel { get; }
+
+            // Anzeigename für Dropdown und Dialoge ("ohne Bezeichnung", wenn RawLabel leer ist)
+            public string VolumeLabel { get; }
+
+            public SuiteDriveOption(DriveInfo drive)
+            {
+                Root = drive.RootDirectory.FullName;
+                RawLabel = ReadVolumeLabel(Root);
+                VolumeLabel = RawLabel.Length == 0 ? Loc.T("SuiteBuilder.NoVolumeLabel") : RawLabel;
+            }
+
+            public override string ToString() => $"{Root} ({VolumeLabel})";
+        }
+
+        // Liest die aktuelle Datenträgerbezeichnung frisch vom Laufwerk; "" wenn nicht lesbar/leer
+        private static string ReadVolumeLabel(string driveRoot)
+        {
+            try
+            {
+                var drive = new DriveInfo(driveRoot);
+                if (drive.IsReady)
+                    return (drive.VolumeLabel ?? "").Trim();
+            }
+            catch { }
+            return "";
+        }
+
+        // Steuerelemente einer Repo-Karte; wird bei jedem Tab-Aufbau neu erzeugt
+        private sealed class SuiteBuildCard
+        {
+            public string Repo { get; init; } = "";
+            public TextBlock VersionText { get; init; } = null!;
+            public ComboBox DriveBox { get; init; } = null!;
+            public Button BuildButton { get; init; } = null!;
+            public TextBlock StatusText { get; init; } = null!;
+            public ProgressBar Progress { get; init; } = null!;
+            public GiteaRelease? Release { get; set; }
+        }
+
+        private void LoadSuiteBuilderTab()
+        {
+            ContentArea.Children.Clear();
+            _suiteBuildCards.Clear();
+            _suiteBuilderGeneration++;
+
+            _giteaSettings = GiteaSettings.Load();
+
+            if (!_giteaSettings.IsConfigured)
+                ShowGiteaSetupPrompt();
+            else
+                ShowSuiteBuilderUi();
+        }
+
+        // ----- Gitea-Einrichtung -----
+
+        private void ShowGiteaSetupPrompt()
+        {
+            var panel = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Width = 360
+            };
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.SetupTitle"),
+                Foreground = (Brush)FindResource("TextPrimary"),
+                FontSize = 16,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.SetupDescription"),
+                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 16)
+            });
+
+            var urlBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupServerLabel"), _giteaSettings.BaseUrl);
+            var orgBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupOrgLabel"), _giteaSettings.Org);
+            var tokenBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupTokenLabel"), _giteaSettings.Token);
+
+            var errorText = new TextBlock
+            {
+                Foreground = Brushes.IndianRed,
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 8),
+                Visibility = Visibility.Collapsed
+            };
+            panel.Children.Add(errorText);
+
+            void ShowError(string message)
+            {
+                errorText.Text = message;
+                errorText.Visibility = Visibility.Visible;
+            }
+
+            var saveButton = new Button
+            {
+                Content = Loc.T("SuiteBuilder.SetupSave"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            saveButton.Click += (_, _) =>
+            {
+                var url = urlBox.Text.Trim();
+                var org = orgBox.Text.Trim();
+                var token = tokenBox.Text.Trim();
+
+                if (url.Length == 0 || org.Length == 0 || token.Length == 0)
+                {
+                    ShowError(Loc.T("SuiteBuilder.SetupErrorIncomplete"));
+                    return;
+                }
+
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+                {
+                    ShowError(Loc.T("SuiteBuilder.SetupErrorInvalidUrl"));
+                    return;
+                }
+
+                var settings = new GiteaSettings { BaseUrl = url.TrimEnd('/'), Org = org, Token = token };
+                if (!settings.Save())
+                {
+                    ShowError(Loc.T("SuiteBuilder.SetupErrorSaving"));
+                    return;
+                }
+
+                _giteaSettings = settings;
+                LoadSuiteBuilderTab();
+            };
+
+            panel.Children.Add(saveButton);
+
+            ContentArea.Children.Add(panel);
+        }
+
+        private TextBox CreateSetupTextBox(StackPanel parent, string label, string value)
+        {
+            parent.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+
+            var box = new TextBox
+            {
+                Text = value,
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                Foreground = (Brush)FindResource("TextPrimary"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            parent.Children.Add(box);
+            return box;
+        }
+
+        // ----- Builder-Oberfläche -----
+
+        private void ShowSuiteBuilderUi()
+        {
+            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            var panel = new StackPanel { Margin = new Thickness(20, 16, 20, 20) };
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.Header"),
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 10,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.Description"),
+                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+
+            var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+
+            var refreshButton = new Button { Content = Loc.T("SuiteBuilder.RefreshButton"), Style = (Style)FindResource("ToolbarButtonStyle") };
+            refreshButton.Click += (_, _) => LoadSuiteBuilderTab();
+            toolbar.Children.Add(refreshButton);
+
+            var settingsButton = new Button
+            {
+                Content = Loc.T("SuiteBuilder.SettingsButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            settingsButton.Click += (_, _) =>
+            {
+                ContentArea.Children.Clear();
+                _suiteBuildCards.Clear();
+                _suiteBuilderGeneration++;
+                ShowGiteaSetupPrompt();
+            };
+            toolbar.Children.Add(settingsButton);
+
+            panel.Children.Add(toolbar);
+
+            foreach (var repo in SuiteBuilderRepos)
+                panel.Children.Add(BuildSuiteRepoCard(repo));
+
+            scroll.Content = panel;
+            ContentArea.Children.Add(scroll);
+
+            _ = RefreshSuiteReleasesAsync(_suiteBuilderGeneration);
+        }
+
+        private Border BuildSuiteRepoCard(string repo)
+        {
+            var card = CreateSectionCard(
+                string.Format(Loc.T("SuiteBuilder.CardTitle"), repo),
+                string.Format(Loc.T("SuiteBuilder.CardDescription"), repo),
+                out var body);
+
+            var versionText = new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.VersionLoading"),
+                Foreground = (Brush)FindResource("AccentBlue"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+            body.Children.Add(versionText);
+
+            body.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.TargetDriveLabel"),
+                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+
+            var driveBox = new ComboBox
+            {
+                Width = 280,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 12),
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                Foreground = (Brush)FindResource("TextPrimary"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                ItemContainerStyle = CreateDarkComboBoxItemStyle()
+            };
+            PopulateRemovableDrives(driveBox);
+
+            // Laufwerke + Bezeichnungen beim Aufklappen neu einlesen, damit Modus und Dialogtext
+            // immer auf dem aktuellen Stand des Sticks basieren
+            driveBox.DropDownOpened += (_, _) => PopulateRemovableDrives(driveBox, preserveSelection: true);
+
+            body.Children.Add(driveBox);
+
+            var buildButton = new Button
+            {
+                Content = Loc.T("SuiteBuilder.BuildButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            body.Children.Add(buildButton);
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
+            body.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            body.Children.Add(progress);
+
+            var cardState = new SuiteBuildCard
+            {
+                Repo = repo,
+                VersionText = versionText,
+                DriveBox = driveBox,
+                BuildButton = buildButton,
+                StatusText = statusText,
+                Progress = progress
+            };
+            _suiteBuildCards.Add(cardState);
+
+            buildButton.Click += (_, _) => _ = BuildSuiteStickAsync(cardState);
+
+            return card;
+        }
+
+        // Einträge im aufgeklappten Laufwerks-Dropdown im dunklen AEGIS-Look statt im hellen Windows-Standard
+        private Style CreateDarkComboBoxItemStyle()
+        {
+            var style = new Style(typeof(ComboBoxItem));
+            style.Setters.Add(new Setter(BackgroundProperty, (Brush)FindResource("BgSurfaceAlt")));
+            style.Setters.Add(new Setter(ForegroundProperty, (Brush)FindResource("TextPrimary")));
+            style.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 4, 6, 4)));
+            return style;
+        }
+
+        // Füllt ein Dropdown mit den aktuell verbundenen Wechseldatenträgern
+        private static void PopulateRemovableDrives(ComboBox box, bool preserveSelection = false)
+        {
+            var previousRoot = preserveSelection && box.SelectedItem is SuiteDriveOption previous ? previous.Root : null;
+
+            box.Items.Clear();
+
+            DriveInfo[] drives;
+            try
+            {
+                drives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Removable && d.IsReady).ToArray();
+            }
+            catch
+            {
+                drives = Array.Empty<DriveInfo>();
+            }
+
+            foreach (var drive in drives)
+                box.Items.Add(new SuiteDriveOption(drive));
+
+            if (box.Items.Count == 0)
+            {
+                box.Items.Add(Loc.T("SuiteBuilder.NoDrives"));
+                box.IsEnabled = false;
+            }
+            else
+            {
+                box.IsEnabled = true;
+            }
+
+            var restoredIndex = -1;
+            if (previousRoot != null)
+            {
+                for (var i = 0; i < box.Items.Count; i++)
+                {
+                    if (box.Items[i] is SuiteDriveOption option &&
+                        string.Equals(option.Root, previousRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        restoredIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            box.SelectedIndex = restoredIndex >= 0 ? restoredIndex : 0;
+        }
+
+        // Holt für alle Karten parallel das jeweils neueste Release vom Gitea-Server
+        private async Task RefreshSuiteReleasesAsync(int generation)
+        {
+            var settings = _giteaSettings;
+
+            foreach (var card in _suiteBuildCards.ToList())
+            {
+                var repo = card.Repo;
+
+                try
+                {
+                    var release = await GiteaService.GetLatestReleaseAsync(settings, repo);
+
+                    // Tab wurde zwischenzeitlich neu aufgebaut -> Ergebnis verwerfen
+                    if (generation != _suiteBuilderGeneration)
+                        return;
+
+                    card.Release = release;
+
+                    var zip = release.ZipAsset;
+                    if (zip == null)
+                    {
+                        card.VersionText.Text = string.Format(Loc.T("SuiteBuilder.VersionNoZip"), release.TagName);
+                        card.BuildButton.IsEnabled = false;
+                    }
+                    else
+                    {
+                        card.VersionText.Text = string.Format(
+                            Loc.T("SuiteBuilder.VersionAvailable"), release.TagName, zip.Name, FormatBytes(zip.Size));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (generation != _suiteBuilderGeneration)
+                        return;
+
+                    card.Release = null;
+                    card.VersionText.Text = string.Format(Loc.T("SuiteBuilder.VersionError"), ex.Message);
+                }
+            }
+        }
+
+        // ----- Stick bauen -----
+
+        private async Task BuildSuiteStickAsync(SuiteBuildCard card)
+        {
+            if (card.Release?.ZipAsset is not GiteaAsset asset)
+            {
+                card.StatusText.Text = Loc.T("SuiteBuilder.NoReleaseYet");
+                return;
+            }
+
+            if (card.DriveBox.SelectedItem is not SuiteDriveOption drive)
+            {
+                card.StatusText.Text = Loc.T("SuiteBuilder.SelectDrive");
+                return;
+            }
+
+            var version = card.Release.TagName;
+
+            // Modus live entscheiden: Label wird direkt vor dem Dialog erneut gelesen,
+            // falls sich der Stick seit dem Befüllen des Dropdowns geändert hat.
+            var currentLabel = ReadVolumeLabel(drive.Root);
+            var isUpdate = string.Equals(currentLabel, card.Repo, StringComparison.OrdinalIgnoreCase);
+            var currentLabelDisplay = currentLabel.Length == 0 ? Loc.T("SuiteBuilder.NoVolumeLabel") : currentLabel;
+
+            bool confirmed;
+            if (isUpdate)
+            {
+                // Update: nur die Stick-Software erneuern, restliche Dateien bleiben liegen
+                confirmed = ShowConfirmDialog(
+                    string.Format(Loc.T("SuiteBuilder.ConfirmUpdateTitle"), card.Repo),
+                    string.Format(Loc.T("SuiteBuilder.ConfirmUpdateMessage"), card.Repo, drive.Root, version),
+                    Loc.T("SuiteBuilder.ConfirmUpdateButton"));
+            }
+            else
+            {
+                // Neubau: das Laufwerk wird komplett geleert – entsprechend deutlich nachfragen
+                confirmed = ShowConfirmDialog(
+                    string.Format(Loc.T("SuiteBuilder.ConfirmNewTitle"), card.Repo),
+                    string.Format(Loc.T("SuiteBuilder.ConfirmNewMessage"), drive.Root, currentLabelDisplay, card.Repo, version),
+                    string.Format(Loc.T("SuiteBuilder.ConfirmNewButton"), card.Repo));
+            }
+
+            if (!confirmed)
+                return;
+
+            var tempFile = Path.Combine(_suiteBuilderTempDir, $"{card.Repo}-{DateTime.Now:yyyyMMddHHmmss}.zip");
+
+            card.BuildButton.IsEnabled = false;
+            card.DriveBox.IsEnabled = false;
+            card.Progress.IsIndeterminate = false;
+            card.Progress.Minimum = 0;
+            card.Progress.Maximum = 100;
+            card.Progress.Value = 0;
+            card.Progress.Visibility = Visibility.Visible;
+
+            StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.StatusBuilding"), card.Repo, drive.Root);
+
+            IProgress<(long BytesRead, long TotalBytes)> downloadProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)(p.BytesRead * 100 / p.TotalBytes);
+                    card.Progress.Value = Math.Min(100, percent);
+                    card.StatusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.Downloading"), card.Repo, version, percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+                }
+                else
+                {
+                    card.Progress.IsIndeterminate = true;
+                    card.StatusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.DownloadingUnknownSize"), card.Repo, version, FormatBytes(p.BytesRead));
+                }
+            });
+
+            // Nach einem erfolgreichen AVAS-Build folgt der optionale Treiber-Datenbank-Schritt.
+            // Der Dialog wird erst nach dem finally-Block gezeigt, damit die Karte vorher wieder freigegeben ist.
+            var offerDriverSetup = false;
+
+            try
+            {
+                card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Downloading"), card.Repo, version, 0, FormatBytes(0), FormatBytes(asset.Size));
+                await GiteaService.DownloadAssetAsync(_giteaSettings, asset, tempFile, downloadProgress);
+
+                card.Progress.IsIndeterminate = true;
+
+                if (!isUpdate)
+                {
+                    // Neubau: Laufwerk vor dem Entpacken komplett leeren
+                    card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Wiping"), drive.Root);
+                    await Task.Run(() => WipeDriveRoot(drive.Root));
+                }
+
+                card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Extracting"), drive.Root);
+                await Task.Run(() => ZipFile.ExtractToDirectory(tempFile, drive.Root, overwriteFiles: true));
+
+                card.StatusText.Text = Loc.T("SuiteBuilder.SettingLabel");
+                var labelError = await Task.Run(() => TrySetVolumeLabel(drive.Root, card.Repo));
+
+                if (labelError == null)
+                {
+                    card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Done"), card.Repo, version, drive.Root);
+                }
+                else
+                {
+                    card.StatusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.DoneWithWarning"), card.Repo, version, drive.Root,
+                        string.Format(Loc.T("SuiteBuilder.LabelFailed"), labelError));
+                }
+
+                StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.StatusDone"), card.Repo, version);
+
+                // nur AVAS hat die SDI-Treiberinstallation – DART bekommt diesen Schritt nicht
+                offerDriverSetup = string.Equals(card.Repo, AvasSuiteRepo, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Error"), ex.Message);
+                StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.StatusError"), card.Repo, ex.Message);
+            }
+            finally
+            {
+                try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+
+                card.Progress.Visibility = Visibility.Collapsed;
+                card.Progress.IsIndeterminate = true;
+                card.BuildButton.IsEnabled = true;
+
+                // Laufwerksbezeichnung hat sich gerade geändert -> Dropdown-Einträge neu aufbauen
+                // (setzt auch IsEnabled), dabei aber beim selben Laufwerk bleiben
+                PopulateRemovableDrives(card.DriveBox, preserveSelection: true);
+            }
+
+            if (offerDriverSetup)
+                ShowDriverDatabaseSetupDialog(drive.Root);
+        }
+
+        // ----- AVAS: Treiber-Datenbank einrichten (Folgeschritt nach dem Bauen) -----
+
+        // Offizielles "Intel Ethernet Adapter Complete Driver Pack" (~1,3 GB), direkt von Intels eigenem Server.
+        // HINWEIS: URL und Version sind fest verdrahtet und können veralten, sobald Intel ein neues Release
+        // veröffentlicht – dann muss diese Konstante hier von Hand aktualisiert werden. Bewusst akzeptierte
+        // Einschränkung: es gibt keine stabile, automatisierbare "immer neueste Version"-URL bei Intel.
+        private const string IntelEthernetPackUrl = "https://downloadmirror.intel.com/923522/Release_31.2.2.zip";
+
+        // Reine Referenz-Adressen, die der Nutzer selbst im Browser öffnet (keine automatischen Downloads,
+        // da nichts Drittanbieter-Software gehostet oder umverteilt wird).
+        private const string SdiFullDatabaseUrl = "https://sdi-tool.org/download/";
+        private const string RealtekDownloadUrl = "https://www.realtek.com/Download/";
+        private const string IntelWirelessDownloadUrl =
+            "https://www.intel.com/content/www/us/en/download/19351/intel-wireless-wi-fi-drivers-for-windows-10-and-windows-11.html";
+
+        private const string AvasSuiteRepo = "AVAS";
+        private const string DriversFolderName = "Drivers";
+        private const string IntelEthernetFolderName = "Intel-Ethernet";
+
+        // Eigener HttpClient für Nicht-Gitea-Downloads (Intel), bewusst eine wiederverwendete Instanz.
+        // Intels Server liefert ohne User-Agent-Header ein 403 Forbidden zurück, daher explizit gesetzt.
+        private static readonly System.Net.Http.HttpClient DriverHttp = CreateDriverHttpClient();
+
+        private static System.Net.Http.HttpClient CreateDriverHttpClient()
+        {
+            var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(60) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            return client;
+        }
+
+        // Themed Folgedialog nach einem erfolgreichen AVAS-Build: vollständige Offline-Datenbank vs. Lite.
+        // Jederzeit abbrechbar – das ist eine optionale Hilfestellung, keine Pflichtentscheidung.
+        private void ShowDriverDatabaseSetupDialog(string driveRoot)
+        {
+            var driversFolder = Path.Combine(driveRoot, DriversFolderName);
+
+            var win = new Window
+            {
+                Title = Loc.T("DriverSetup.Title"),
+                Width = 560,
+                MaxHeight = 720,
+                SizeToContent = SizeToContent.Height,
+                WindowStyle = WindowStyle.ToolWindow,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = (Brush)FindResource("BgPrimary"),
+                FontFamily = FontFamily
+            };
+
+            // Beim Schließen des Fensters einen laufenden Download abbrechen, statt ihn ins Leere weiterlaufen zu lassen
+            var cts = new System.Threading.CancellationTokenSource();
+            win.Closed += (_, _) => { try { cts.Cancel(); } catch { } };
+
+            var host = new ContentControl { Margin = new Thickness(20) };
+            var scroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = host
+            };
+            win.Content = scroll;
+
+            host.Content = BuildDriverSetupChoiceView(win, host, driversFolder, cts.Token);
+
+            win.ShowDialog();
+        }
+
+        // Schritt 1: Auswahl zwischen vollständiger Datenbank und Lite (oder später einrichten)
+        private StackPanel BuildDriverSetupChoiceView(
+            Window win, ContentControl host, string driversFolder, System.Threading.CancellationToken ct)
+        {
+            var panel = new StackPanel();
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.Title"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.Intro"), "TextMuted", 12, new Thickness(0, 0, 0, 16)));
+
+            panel.Children.Add(BuildDriverSetupOptionCard(
+                Loc.T("DriverSetup.OptionFullTitle"),
+                Loc.T("DriverSetup.OptionFullDescription"),
+                Loc.T("DriverSetup.OptionFullButton"),
+                () => host.Content = BuildDriverSetupFullView(win, host, driversFolder, ct)));
+
+            panel.Children.Add(BuildDriverSetupOptionCard(
+                Loc.T("DriverSetup.OptionLiteTitle"),
+                Loc.T("DriverSetup.OptionLiteDescription"),
+                Loc.T("DriverSetup.OptionLiteButton"),
+                () => host.Content = BuildDriverSetupLiteView(win, host, driversFolder, ct)));
+
+            var skipRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var skipButton = new Button
+            {
+                Content = Loc.T("DriverSetup.Skip"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                IsCancel = true
+            };
+            skipButton.Click += (_, _) => win.Close();
+            skipRow.Children.Add(skipButton);
+            panel.Children.Add(skipRow);
+
+            return panel;
+        }
+
+        // Schritt 2a: vollständige Offline-Datenbank – nur Ordner anlegen + Anleitung
+        private StackPanel BuildDriverSetupFullView(
+            Window win, ContentControl host, string driversFolder, System.Threading.CancellationToken ct)
+        {
+            var panel = new StackPanel();
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullHeading"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDriverFolderResultText(driversFolder));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSteps"), "TextMuted", 12, new Thickness(0, 0, 0, 14)));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.FullSourceLabel"), "TextMuted", 11, new Thickness(0, 0, 0, 4)));
+            panel.Children.Add(CreateDialogTextBlock(SdiFullDatabaseUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 18)));
+
+            panel.Children.Add(BuildDriverSetupFooter(win, host, driversFolder, ct));
+
+            return panel;
+        }
+
+        // Schritt 2b: Lite – Ordner anlegen, Intel-Ethernet-Pack herunterladen, Hinweise auf weitere Hersteller
+        private StackPanel BuildDriverSetupLiteView(
+            Window win, ContentControl host, string driversFolder, System.Threading.CancellationToken ct)
+        {
+            var panel = new StackPanel();
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.LiteHeading"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDriverFolderResultText(driversFolder));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.IntelDescription"), "TextMuted", 12, new Thickness(0, 0, 0, 12)));
+
+            var downloadButton = new Button
+            {
+                Content = Loc.T("DriverSetup.DownloadIntelButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            panel.Children.Add(downloadButton);
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            panel.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            panel.Children.Add(progress);
+
+            downloadButton.Click += (_, _) =>
+                _ = DownloadIntelEthernetPackAsync(driversFolder, downloadButton, progress, statusText, ct);
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualHint"), "TextMuted", 12, new Thickness(0, 18, 0, 10)));
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualRealtekLabel"), "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
+            panel.Children.Add(CreateDialogTextBlock(RealtekDownloadUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 10)));
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DriverSetup.ManualIntelWlanLabel"), "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
+            panel.Children.Add(CreateDialogTextBlock(IntelWirelessDownloadUrl, "AccentBlue", 12, new Thickness(0, 0, 0, 18)));
+
+            panel.Children.Add(BuildDriverSetupFooter(win, host, driversFolder, ct));
+
+            return panel;
+        }
+
+        // Gemeinsame Fußzeile der beiden Detailansichten: zurück zur Auswahl oder Dialog schließen
+        private StackPanel BuildDriverSetupFooter(
+            Window win, ContentControl host, string driversFolder, System.Threading.CancellationToken ct)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+
+            var backButton = new Button
+            {
+                Content = Loc.T("DriverSetup.Back"),
+                Style = (Style)FindResource("ToolbarButtonStyle")
+            };
+            backButton.Click += (_, _) => host.Content = BuildDriverSetupChoiceView(win, host, driversFolder, ct);
+            row.Children.Add(backButton);
+
+            var closeButton = new Button
+            {
+                Content = Loc.T("DriverSetup.Close"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                Margin = new Thickness(6, 0, 0, 0),
+                IsCancel = true
+            };
+            closeButton.Click += (_, _) => win.Close();
+            row.Children.Add(closeButton);
+
+            return row;
+        }
+
+        // Karte für eine der beiden Optionen im Auswahlschritt
+        private Border BuildDriverSetupOptionCard(string title, string description, string buttonText, Action onChosen)
+        {
+            var border = new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 14)
+            };
+
+            var stack = new StackPanel();
+            stack.Children.Add(CreateDialogTextBlock(title, "TextPrimary", 13, new Thickness(0, 0, 0, 6), bold: true));
+            stack.Children.Add(CreateDialogTextBlock(description, "TextMuted", 11, new Thickness(0, 0, 0, 12)));
+
+            var button = new Button
+            {
+                Content = buttonText,
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            button.Click += (_, _) => onChosen();
+            stack.Children.Add(button);
+
+            border.Child = stack;
+            return border;
+        }
+
+        // Legt Drivers\ auf dem Stick an und meldet Erfolg bzw. Fehler als Text zurück
+        private TextBlock CreateDriverFolderResultText(string driversFolder)
+        {
+            try
+            {
+                Directory.CreateDirectory(driversFolder);
+                StatusLeft.Text = string.Format(Loc.T("DriverSetup.StatusFolderCreated"), driversFolder);
+                return CreateDialogTextBlock(
+                    string.Format(Loc.T("DriverSetup.FolderCreated"), driversFolder),
+                    "TextSecondary", 12, new Thickness(0, 0, 0, 12));
+            }
+            catch (Exception ex)
+            {
+                var block = CreateDialogTextBlock(
+                    string.Format(Loc.T("DriverSetup.FolderError"), driversFolder, ex.Message),
+                    "TextSecondary", 12, new Thickness(0, 0, 0, 12));
+                block.Foreground = Brushes.IndianRed;
+                return block;
+            }
+        }
+
+        private TextBlock CreateDialogTextBlock(string text, string brushResourceKey, double fontSize, Thickness margin, bool bold = false)
+        {
+            return new TextBlock
+            {
+                Text = text,
+                Foreground = (Brush)FindResource(brushResourceKey),
+                FontSize = fontSize,
+                FontWeight = bold ? FontWeights.Bold : FontWeights.Normal,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = margin
+            };
+        }
+
+        // Lädt das Intel-Ethernet-Paket nach Drivers\Intel-Ethernet\ und entpackt es dort.
+        // Fortschrittsanzeige wie beim Release-Download im Suite-Builder.
+        private async Task DownloadIntelEthernetPackAsync(
+            string driversFolder, Button downloadButton, ProgressBar progress, TextBlock statusText, System.Threading.CancellationToken ct)
+        {
+            var targetFolder = Path.Combine(driversFolder, IntelEthernetFolderName);
+
+            var fileName = "Intel-Ethernet-Pack.zip";
+            try { fileName = Path.GetFileName(new Uri(IntelEthernetPackUrl).LocalPath); } catch { }
+            if (string.IsNullOrWhiteSpace(fileName))
+                fileName = "Intel-Ethernet-Pack.zip";
+
+            var targetFile = Path.Combine(targetFolder, fileName);
+
+            downloadButton.IsEnabled = false;
+            progress.IsIndeterminate = false;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.Visibility = Visibility.Visible;
+
+            IProgress<(long BytesRead, long TotalBytes)> downloadProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)(p.BytesRead * 100 / p.TotalBytes);
+                    progress.Value = Math.Min(100, percent);
+                    statusText.Text = string.Format(
+                        Loc.T("DriverSetup.Downloading"), percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+                }
+                else
+                {
+                    progress.IsIndeterminate = true;
+                    statusText.Text = string.Format(Loc.T("DriverSetup.DownloadingUnknownSize"), FormatBytes(p.BytesRead));
+                }
+            });
+
+            try
+            {
+                Directory.CreateDirectory(targetFolder);
+
+                statusText.Text = string.Format(Loc.T("DriverSetup.Downloading"), 0, FormatBytes(0), FormatBytes(0));
+                await DownloadFileWithProgressAsync(IntelEthernetPackUrl, targetFile, downloadProgress, ct);
+
+                progress.IsIndeterminate = true;
+                statusText.Text = string.Format(Loc.T("DriverSetup.Extracting"), targetFolder);
+                await Task.Run(() => ZipFile.ExtractToDirectory(targetFile, targetFolder, overwriteFiles: true), ct);
+
+                // ZIP nach dem Entpacken entfernen – sonst liegt das Paket doppelt (~2,6 GB) auf dem Stick
+                try { File.Delete(targetFile); } catch { }
+
+                statusText.Text = string.Format(Loc.T("DriverSetup.DownloadDone"), targetFolder);
+                StatusLeft.Text = string.Format(Loc.T("DriverSetup.StatusDone"), targetFolder);
+            }
+            catch (OperationCanceledException)
+            {
+                TryDeletePartialDownload(targetFile);
+                statusText.Text = Loc.T("DriverSetup.DownloadCancelled");
+            }
+            catch (Exception ex)
+            {
+                TryDeletePartialDownload(targetFile);
+                statusText.Text = string.Format(Loc.T("DriverSetup.DownloadError"), ex.Message);
+            }
+            finally
+            {
+                progress.Visibility = Visibility.Collapsed;
+                progress.IsIndeterminate = true;
+                downloadButton.IsEnabled = true;
+            }
+        }
+
+        // Halb heruntergeladene ZIPs nicht auf dem Stick liegen lassen
+        private static void TryDeletePartialDownload(string file)
+        {
+            try { if (File.Exists(file)) File.Delete(file); } catch { }
+        }
+
+        // Wie GiteaService.DownloadAssetAsync, nur ohne Token/Gitea-spezifische URL-Korrektur:
+        // gestückeltes Lesen mit Fortschrittsmeldung alle ~256 KB.
+        private static async Task DownloadFileWithProgressAsync(
+            string url,
+            string targetFile,
+            IProgress<(long BytesRead, long TotalBytes)>? progress,
+            System.Threading.CancellationToken ct)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+
+            using var response = await DriverHttp.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            var total = response.Content.Headers.ContentLength ?? 0;
+
+            using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var target = new FileStream(targetFile, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+
+            var buffer = new byte[81920];
+            long readTotal = 0;
+            long lastReported = 0;
+            int read;
+
+            while ((read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false)) > 0)
+            {
+                await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                readTotal += read;
+
+                if (progress != null && readTotal - lastReported >= 262144)
+                {
+                    lastReported = readTotal;
+                    progress.Report((readTotal, total));
+                }
+            }
+
+            progress?.Report((readTotal, total));
+        }
+
+        // Löscht alle Dateien und Ordner im Wurzelverzeichnis des Laufwerks.
+        // Einzelne gesperrte oder geschützte Einträge (z. B. "System Volume Information")
+        // werden übersprungen, damit der Rest trotzdem entfernt wird.
+        private static void WipeDriveRoot(string driveRoot)
+        {
+            string[] entries;
+            try
+            {
+                entries = Directory.GetFileSystemEntries(driveRoot);
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    if (Directory.Exists(entry))
+                    {
+                        Directory.Delete(entry, recursive: true);
+                    }
+                    else if (File.Exists(entry))
+                    {
+                        // Schreibschutz/Versteckt-Attribute vorher entfernen, sonst schlägt File.Delete fehl
+                        try { File.SetAttributes(entry, FileAttributes.Normal); } catch { }
+                        File.Delete(entry);
+                    }
+                }
+                catch
+                {
+                    // Eintrag gesperrt oder System – überspringen und weitermachen
+                }
+            }
+        }
+
+        // Setzt die Datenträgerbezeichnung über WMI (Win32_Volume).
+        // Gibt null bei Erfolg zurück, sonst die Fehlermeldung – ein Fehlschlag ist nicht kritisch,
+        // die Dateien liegen dann trotzdem schon auf dem Stick.
+        private static string? TrySetVolumeLabel(string driveRoot, string label)
+        {
+            try
+            {
+                // "E:\" -> "E:" (Win32_Volume.DriveLetter ist ohne Backslash)
+                var driveLetter = driveRoot.TrimEnd('\\', '/');
+
+                using var searcher = new System.Management.ManagementObjectSearcher(
+                    $"SELECT * FROM Win32_Volume WHERE DriveLetter = '{driveLetter}'");
+
+                foreach (var item in searcher.Get())
+                {
+                    using var volume = (System.Management.ManagementObject)item;
+                    volume["Label"] = label;
+                    volume.Put();
+                    return null;
+                }
+
+                return $"Win32_Volume {driveLetter} not found";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            if (bytes >= 1024L * 1024 * 1024)
+                return $"{bytes / (1024.0 * 1024 * 1024):0.0} GB";
+            if (bytes >= 1024L * 1024)
+                return $"{bytes / (1024.0 * 1024):0.0} MB";
+            if (bytes >= 1024)
+                return $"{bytes / 1024.0:0.0} KB";
+            return $"{bytes} B";
         }
     }
 

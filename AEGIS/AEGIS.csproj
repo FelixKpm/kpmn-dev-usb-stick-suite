@@ -13,6 +13,11 @@
     <Resource Include="Assets\**\*.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- WMI-Zugriff (Win32_Volume) zum Setzen der Datenträgerbezeichnung im Suite-Builder -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
   <!--
     Signiert die gebaute EXE automatisch mit dem lokalen Kpmn-Development-Entwicklerzertifikat,
     falls das Signier-Skript auf diesem Rechner vorhanden ist (liegt bewusst außerhalb des Repos,
