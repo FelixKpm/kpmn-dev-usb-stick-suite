@@ -2873,6 +2873,9 @@ namespace AEGIS
             foreach (var repo in SuiteBuilderRepos)
                 panel.Children.Add(BuildSuiteRepoCard(repo));
 
+            // MABS läuft bewusst getrennt: kein Release zum Entpacken, sondern eine Ventoy-Installation
+            panel.Children.Add(BuildMabsCard());
+
             scroll.Content = panel;
             ContentArea.Children.Add(scroll);
 
@@ -2955,6 +2958,67 @@ namespace AEGIS
             _suiteBuildCards.Add(cardState);
 
             buildButton.Click += (_, _) => _ = BuildSuiteStickAsync(cardState);
+
+            return card;
+        }
+
+        // ----- MABS (Ventoy) -----
+
+        private const string MabsSuiteRepo = "MABS";
+
+        // Eigene Karte für den MABS-Stick: hier wird nicht entpackt, sondern der gesamte Datenträger
+        // mit Ventoy neu partitioniert – deshalb ohne Versionszeile und mit eigenem Build-Pfad.
+        private Border BuildMabsCard()
+        {
+            var card = CreateSectionCard(
+                Loc.T("SuiteBuilder.Mabs.CardTitle"),
+                Loc.T("SuiteBuilder.Mabs.CardDescription"),
+                out var body);
+
+            body.Children.Add(new TextBlock
+            {
+                Text = Loc.T("SuiteBuilder.TargetDriveLabel"),
+                Foreground = (Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+
+            var driveBox = new ComboBox
+            {
+                Width = 280,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 12),
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                Foreground = (Brush)FindResource("TextPrimary"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                ItemContainerStyle = CreateDarkComboBoxItemStyle()
+            };
+            PopulateRemovableDrives(driveBox);
+            driveBox.DropDownOpened += (_, _) => PopulateRemovableDrives(driveBox, preserveSelection: true);
+            body.Children.Add(driveBox);
+
+            var buildButton = new Button
+            {
+                Content = Loc.T("SuiteBuilder.Mabs.BuildButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            body.Children.Add(buildButton);
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
+            body.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            body.Children.Add(progress);
+
+            buildButton.Click += (_, _) => _ = BuildMabsStickAsync(driveBox, buildButton, statusText, progress);
 
             return card;
         }
@@ -3192,6 +3256,231 @@ namespace AEGIS
 
             if (offerDriverSetup)
                 ShowDriverDatabaseSetupDialog(drive.Root);
+        }
+
+        // ----- MABS-Stick bauen (Ventoy-Installation + Kpmn-Theme) -----
+
+        private async Task BuildMabsStickAsync(ComboBox driveBox, Button buildButton, TextBlock statusText, ProgressBar progress)
+        {
+            if (driveBox.SelectedItem is not SuiteDriveOption drive)
+            {
+                statusText.Text = Loc.T("SuiteBuilder.SelectDrive");
+                return;
+            }
+
+            // Label und Größe unmittelbar vor dem Dialog frisch lesen, damit der Warntext wirklich
+            // den Datenträger beschreibt, der gleich formatiert wird
+            var currentLabel = ReadVolumeLabel(drive.Root);
+            var currentLabelDisplay = currentLabel.Length == 0 ? Loc.T("SuiteBuilder.NoVolumeLabel") : currentLabel;
+
+            var totalDisplay = Loc.T("SuiteBuilder.Mabs.UnknownSize");
+            var freeDisplay = Loc.T("SuiteBuilder.Mabs.UnknownSize");
+            try
+            {
+                var info = new DriveInfo(drive.Root);
+                if (info.IsReady)
+                {
+                    totalDisplay = FormatBytes(info.TotalSize);
+                    freeDisplay = FormatBytes(info.TotalFreeSpace);
+                }
+            }
+            catch { }
+
+            var confirmed = ShowConfirmDialog(
+                Loc.T("SuiteBuilder.Mabs.ConfirmTitle"),
+                string.Format(Loc.T("SuiteBuilder.Mabs.ConfirmMessage"), drive.Root, currentLabelDisplay, totalDisplay, freeDisplay),
+                Loc.T("SuiteBuilder.Mabs.ConfirmButton"));
+
+            if (!confirmed)
+                return;
+
+            var stamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            var tempZip = Path.Combine(_suiteBuilderTempDir, $"MABS-{stamp}.zip");
+            var tempExtractDir = Path.Combine(_suiteBuilderTempDir, $"MABS-{stamp}");
+
+            driveBox.IsEnabled = false;
+            buildButton.IsEnabled = false;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.IsIndeterminate = true;
+            progress.Visibility = Visibility.Visible;
+
+            StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusBuilding"), drive.Root);
+
+            IProgress<(long BytesRead, long TotalBytes)> ventoyDownloadProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)(p.BytesRead * 100 / p.TotalBytes);
+                    progress.IsIndeterminate = false;
+                    progress.Value = Math.Min(100, percent);
+                    statusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.Mabs.StageDownloadingVentoy"), percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+                }
+                else
+                {
+                    progress.IsIndeterminate = true;
+                    statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDownloadingVentoyUnknownSize"), FormatBytes(p.BytesRead));
+                }
+            });
+
+            IProgress<int> installProgress = new Progress<int>(p =>
+            {
+                // sobald echte Prozentwerte aus Ventoys cli_percent.txt kommen, aus dem Indeterminate-Modus raus
+                progress.IsIndeterminate = false;
+                progress.Value = Math.Clamp(p, 0, 100);
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageInstallingPercent"), drive.Root, p);
+            });
+
+            IProgress<(long BytesRead, long TotalBytes)> themeDownloadProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)(p.BytesRead * 100 / p.TotalBytes);
+                    progress.IsIndeterminate = false;
+                    progress.Value = Math.Min(100, percent);
+                    statusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.Mabs.StageDownloadingTheme"), percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+                }
+                else
+                {
+                    progress.IsIndeterminate = true;
+                    statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDownloadingThemeUnknownSize"), FormatBytes(p.BytesRead));
+                }
+            });
+
+            try
+            {
+                statusText.Text = Loc.T("SuiteBuilder.Mabs.StageCheckingVentoy");
+                var ventoyExe = await VentoyService.EnsureVentoyAsync(ventoyDownloadProgress);
+
+                progress.IsIndeterminate = true;
+                progress.Value = 0;
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageInstalling"), drive.Root);
+
+                var install = await VentoyService.RunInstallAsync(
+                    ventoyExe, drive.Root, installProgress, System.Threading.CancellationToken.None);
+
+                if (!install.Success)
+                {
+                    statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.InstallFailed"), install.ErrorMessage ?? "");
+                    StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusError"), install.ErrorMessage ?? "");
+                    return;
+                }
+
+                progress.IsIndeterminate = true;
+                statusText.Text = Loc.T("SuiteBuilder.Mabs.StageLocatingPartition");
+
+                var themeTarget = await FindVentoyDataDriveAsync(drive.Root);
+                if (themeTarget == null)
+                {
+                    // Ventoy selbst ist durch – nur das Theme fehlt, und das ist rein kosmetisch
+                    statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.DoneNoTheme"), drive.Root) + " " + Loc.T("SuiteBuilder.Mabs.IsoHint");
+                    StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusDone"), drive.Root);
+                    return;
+                }
+
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDownloadingTheme"), 0, FormatBytes(0), FormatBytes(0));
+                await GiteaService.DownloadRepoArchiveAsync(_giteaSettings, MabsSuiteRepo, tempZip, themeDownloadProgress);
+
+                progress.IsIndeterminate = true;
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDeployingTheme"), themeTarget);
+                await Task.Run(() => DeployMabsTheme(tempZip, tempExtractDir, themeTarget));
+
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Done"), themeTarget) + " " + Loc.T("SuiteBuilder.Mabs.IsoHint");
+                StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusDone"), themeTarget);
+            }
+            catch (Exception ex)
+            {
+                statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Error"), ex.Message);
+                StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusError"), ex.Message);
+            }
+            finally
+            {
+                try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                try { if (Directory.Exists(tempExtractDir)) Directory.Delete(tempExtractDir, recursive: true); } catch { }
+
+                progress.Visibility = Visibility.Collapsed;
+                progress.IsIndeterminate = true;
+                progress.Value = 0;
+                buildButton.IsEnabled = true;
+
+                // Partitionierung und Bezeichnung haben sich geändert -> Dropdown neu aufbauen (setzt auch IsEnabled)
+                PopulateRemovableDrives(driveBox, preserveSelection: true);
+            }
+        }
+
+        // Ventoy gibt den Pfad der neu angelegten Datenpartition nicht zurück, deshalb diese Heuristik:
+        // Windows braucht nach dem Partitionieren ein paar Sekunden, bis beide Partitionen gemountet sind
+        // (daher alle 500 ms, bis zu ~10 s). Gesucht wird ein Wechseldatenträger, der nicht "VTOYEFI" heißt –
+        // das ist Ventoys 32-MB-EFI-Partition mit festem Label. Bevorzugt wird derselbe Laufwerksbuchstabe
+        // wie vorher (Windows behält ihn meist bei), dann ein Laufwerk mit Ventoys Standardbezeichnung
+        // "Ventoy", und erst zuletzt schlicht der größte verbliebene Wechseldatenträger.
+        private static async Task<string?> FindVentoyDataDriveAsync(string previousRoot)
+        {
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                try
+                {
+                    var candidates = DriveInfo.GetDrives()
+                        .Where(d => d.DriveType == DriveType.Removable && d.IsReady)
+                        .Where(d => !string.Equals(ReadVolumeLabel(d.RootDirectory.FullName), "VTOYEFI", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    var sameLetter = candidates.FirstOrDefault(d =>
+                        string.Equals(d.RootDirectory.FullName, previousRoot, StringComparison.OrdinalIgnoreCase));
+                    if (sameLetter != null)
+                        return sameLetter.RootDirectory.FullName;
+
+                    var ventoyLabelled = candidates.FirstOrDefault(d =>
+                        string.Equals(ReadVolumeLabel(d.RootDirectory.FullName), "Ventoy", StringComparison.OrdinalIgnoreCase));
+                    if (ventoyLabelled != null)
+                        return ventoyLabelled.RootDirectory.FullName;
+
+                    var largest = candidates.OrderByDescending(d => d.TotalSize).FirstOrDefault();
+                    if (largest != null)
+                        return largest.RootDirectory.FullName;
+                }
+                catch
+                {
+                    // Laufwerk gerade nicht abfragbar (wird noch gemountet) – einfach erneut versuchen
+                }
+
+                await Task.Delay(500);
+            }
+
+            return null;
+        }
+
+        // Entpackt das MABS-Repo-Archiv und kopiert den ventoy-Ordner auf die Datenpartition.
+        // Ventoy erwartet seine Konfiguration genau unter X:\ventoy\ventoy.json, deshalb landet der
+        // Ordner als Ganzes im Wurzelverzeichnis und nicht sein Inhalt.
+        private static void DeployMabsTheme(string archiveFile, string extractDir, string targetRoot)
+        {
+            if (Directory.Exists(extractDir))
+                Directory.Delete(extractDir, recursive: true);
+            Directory.CreateDirectory(extractDir);
+
+            ZipFile.ExtractToDirectory(archiveFile, extractDir, overwriteFiles: true);
+
+            // Gitea packt das Archiv in einen Repo-Unterordner, deshalb rekursiv nach "ventoy" suchen
+            var themeSource = Directory.EnumerateDirectories(extractDir, "ventoy", SearchOption.AllDirectories).FirstOrDefault();
+            if (themeSource == null)
+                throw new DirectoryNotFoundException("ventoy");
+
+            CopyDirectoryContents(themeSource, Path.Combine(targetRoot, "ventoy"));
+        }
+
+        private static void CopyDirectoryContents(string sourceDir, string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+
+            foreach (var file in Directory.GetFiles(sourceDir))
+                File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), overwrite: true);
+
+            foreach (var dir in Directory.GetDirectories(sourceDir))
+                CopyDirectoryContents(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
         }
 
         // ----- AVAS: Treiber-Datenbank einrichten (Folgeschritt nach dem Bauen) -----

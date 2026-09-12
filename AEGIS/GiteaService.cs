@@ -137,7 +137,58 @@ namespace AEGIS
             using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
-            var total = response.Content.Headers.ContentLength ?? asset.Size;
+            await StreamToFileAsync(response, targetFile, asset.Size, progress, ct).ConfigureAwait(false);
+        }
+
+        // Lädt den kompletten Repo-Inhalt als ZIP (Archiv des Standard-Branches).
+        // Nötig für Repos ohne Release (z.B. MABS: nur Theme-Dateien im Repo, kein gebautes Stick-Image).
+        public static async Task DownloadRepoArchiveAsync(
+            GiteaSettings settings,
+            string repo,
+            string targetFile,
+            IProgress<(long BytesRead, long TotalBytes)>? progress = null,
+            CancellationToken ct = default)
+        {
+            var baseUrl = settings.BaseUrl.TrimEnd('/');
+            var branch = await GetDefaultBranchAsync(settings, repo, ct).ConfigureAwait(false);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+
+            // Bewusst die Web-Archiv-Route statt eines API-Pfades – nur sie liefert das fertige ZIP.
+            // Der Token-Header bleibt trotzdem nötig, weil das Repo privat ist.
+            var archiveUrl = $"{baseUrl}/{settings.Org}/{repo}/archive/{Uri.EscapeDataString(branch)}.zip";
+
+            using var request = CreateRequest(archiveUrl, settings);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            await StreamToFileAsync(response, targetFile, 0, progress, ct).ConfigureAwait(false);
+        }
+
+        private static async Task<string> GetDefaultBranchAsync(GiteaSettings settings, string repo, CancellationToken ct)
+        {
+            var url = $"{settings.BaseUrl.TrimEnd('/')}/api/v1/repos/{settings.Org}/{repo}";
+
+            using var request = CreateRequest(url, settings);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+
+            var branch = doc.RootElement.TryGetProperty("default_branch", out var branchProp) ? branchProp.GetString() ?? "" : "";
+            return string.IsNullOrWhiteSpace(branch) ? "main" : branch;
+        }
+
+        // Gemeinsamer Download-Kern beider Methoden: gestückeltes Kopieren mit Fortschrittsmeldung
+        private static async Task StreamToFileAsync(
+            HttpResponseMessage response,
+            string targetFile,
+            long fallbackTotal,
+            IProgress<(long BytesRead, long TotalBytes)>? progress,
+            CancellationToken ct)
+        {
+            var total = response.Content.Headers.ContentLength ?? fallbackTotal;
 
             using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using var target = new FileStream(targetFile, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
