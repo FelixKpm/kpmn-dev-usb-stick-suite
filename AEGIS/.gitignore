@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Claude Code local files and design mockups — not meant for the public repo
+.claude/
+*mockup*.html

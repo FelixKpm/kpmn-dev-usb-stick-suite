@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>AEGIS</RootNamespace>
+    <AssemblyName>AEGIS</AssemblyName>
+    <ApplicationIcon>Assets\AEGIS_Icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\**\*.png" />
+    <Resource Include="Assets\AEGIS_Icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WMI-Zugriff (Win32_Volume) zum Setzen der Datenträgerbezeichnung im Suite-Builder -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+  <!--
+    Signiert die gebaute EXE automatisch mit dem lokalen Kpmn-Development-Entwicklerzertifikat,
+    falls das Signier-Skript auf diesem Rechner vorhanden ist (liegt bewusst außerhalb des Repos,
+    damit das Zertifikat/Passwort nicht versioniert wird). Auf anderen Rechnern ohne dieses Skript
+    wird der Schritt übersprungen, statt den Build fehlschlagen zu lassen.
+  -->
+  <Target Name="SignAegisExecutable" AfterTargets="Build"
+          Condition="Exists('C:\Users\Koopm\Kpmn-Signing\sign-aegis.ps1')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;C:\Users\Koopm\Kpmn-Signing\sign-aegis.ps1&quot; -TargetExe &quot;$(TargetDir)$(TargetName).exe&quot;" />
+  </Target>
+
+</Project>

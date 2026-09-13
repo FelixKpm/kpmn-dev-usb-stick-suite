@@ -1,0 +1,345 @@
+<Window x:Class="AEGIS.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AEGIS" Height="720" Width="1180"
+        Background="#1A2E4A"
+        WindowStartupLocation="CenterScreen"
+        Icon="Assets/AEGIS_Icon.ico"
+        FontFamily="Consolas">
+
+    <Window.Resources>
+
+        <!-- Farben -->
+        <SolidColorBrush x:Key="BgPrimary" Color="#1A2E4A"/>
+        <SolidColorBrush x:Key="BgSurface" Color="#1E3A5F"/>
+        <SolidColorBrush x:Key="BgSurfaceAlt" Color="#1A3358"/>
+        <SolidColorBrush x:Key="BgDeep" Color="#152540"/>
+        <SolidColorBrush x:Key="BorderColor" Color="#2A4F7A"/>
+        <SolidColorBrush x:Key="TextPrimary" Color="#F5F0E8"/>
+        <SolidColorBrush x:Key="TextSecondary" Color="#7AB4E8"/>
+        <SolidColorBrush x:Key="TextMuted" Color="#4A7AAA"/>
+        <SolidColorBrush x:Key="AccentBlue" Color="#4A9EFF"/>
+
+        <!-- Tab Button Style -->
+        <Style x:Key="TabButtonStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="18,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Border" Background="Transparent" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Ordner-Item Style (Sidebar links) -->
+        <Style x:Key="FolderItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="14,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Border" Background="Transparent" BorderThickness="2,0,0,0" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Datei-Item Style -->
+        <Style x:Key="FileItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Border" Background="Transparent" BorderThickness="0,0,0,1" BorderBrush="{StaticResource BgPrimary}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Toolbar-Button Style (Zurück-Navigation) -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background" Value="{StaticResource BgSurfaceAlt}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" BorderBrush="{StaticResource BorderColor}" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+                                <Setter TargetName="Border" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Eintrag im aufgeklappten Dropdown (dunkler AEGIS-Look statt Windows-Standard) -->
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderThickness="2,0,0,0"
+                                BorderBrush="Transparent"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBox im AEGIS-Dark-Theme (kompletter ControlTemplate, sonst bleibt die Windows-Chrome hell) -->
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Background" Value="{StaticResource BgSurfaceAlt}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="TemplateRoot" SnapsToDevicePixels="True">
+
+                            <!-- Zugeklappter Zustand: Rahmen + Pfeil liegen im ToggleButton -->
+                            <ToggleButton x:Name="ToggleButton"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Border"
+                                                CornerRadius="6"
+                                                Background="{StaticResource BgSurfaceAlt}"
+                                                BorderBrush="{StaticResource BorderColor}"
+                                                BorderThickness="1"
+                                                SnapsToDevicePixels="True">
+                                            <TextBlock x:Name="Arrow"
+                                                       Text="&#x25BC;"
+                                                       FontSize="9"
+                                                       Foreground="{StaticResource TextSecondary}"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,10,0"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                                <Setter TargetName="Arrow" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                                <Setter TargetName="Arrow" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <!-- Ausgewählter Eintrag: Foreground hier explizit setzen, sonst bleibt der Text unlesbar -->
+                            <ContentPresenter x:Name="ContentSite"
+                                              ContentSource="SelectionBoxItem"
+                                              IsHitTestVisible="False"
+                                              Margin="10,0,28,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{StaticResource TextPrimary}"/>
+
+                            <!-- Aufgeklappte Liste -->
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   Placement="Bottom"
+                                   PlacementTarget="{Binding ElementName=TemplateRoot}"
+                                   PopupAnimation="Slide"
+                                   IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                                <Border x:Name="DropDownBorder"
+                                        Margin="0,4,10,12"
+                                        CornerRadius="6"
+                                        Background="{StaticResource BgSurfaceAlt}"
+                                        BorderBrush="{StaticResource BorderColor}"
+                                        BorderThickness="1"
+                                        SnapsToDevicePixels="True"
+                                        MinWidth="{Binding ActualWidth, ElementName=TemplateRoot}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border.Effect>
+                                        <DropShadowEffect Color="#0B1626" BlurRadius="12" ShadowDepth="2" Opacity="0.6"/>
+                                    </Border.Effect>
+                                    <ScrollViewer x:Name="DropDownScrollViewer"
+                                                  Margin="0,4,0,4"
+                                                  CanContentScroll="True"
+                                                  SnapsToDevicePixels="True">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="TemplateRoot" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="ContentSite" Property="TextElement.Foreground" Value="{StaticResource TextMuted}"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="DropDownBorder" Property="MinHeight" Value="24"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="60"/>
+            <RowDefinition Height="38"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="26"/>
+        </Grid.RowDefinitions>
+
+        <!-- ===== TOPBAR ===== -->
+        <Border Grid.Row="0" Background="{StaticResource BgSurface}" BorderThickness="0,0,0,1" BorderBrush="{StaticResource BorderColor}">
+            <Grid Margin="16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Logo links -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Grid.Column="0">
+                    <Image Source="pack://application:,,,/Assets/kpmn_icon.png" Width="36" Height="36" Margin="0,0,10,0"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="AEGIS" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimary}"/>
+                        <TextBlock Text="All-in-one Environment for General Index &amp; Suite-management"
+                                   FontSize="10" Foreground="{StaticResource AccentBlue}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Stick-Anzeige -->
+                <StackPanel x:Name="StickPanel" Orientation="Horizontal" VerticalAlignment="Center" Grid.Column="1">
+                    <TextBlock x:Name="StickLabelText" Text="erkannte Sticks" FontSize="10" Foreground="{StaticResource TextSecondary}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                </StackPanel>
+
+                <!-- Sprachumschalter rechts -->
+                <StackPanel x:Name="LanguagePanel" Orientation="Horizontal" VerticalAlignment="Center" Grid.Column="2" Margin="16,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- ===== TABS ===== -->
+        <Border Grid.Row="1" Background="{StaticResource BgSurfaceAlt}" BorderThickness="0,0,0,1" BorderBrush="{StaticResource BorderColor}">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="TabDokumente" Content="Dokumente" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" IsChecked="True" Checked="Tab_Checked"/>
+                <RadioButton x:Name="TabTemplates" Content="Templates" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
+                <RadioButton x:Name="TabVault" Content="Vault" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
+                <RadioButton x:Name="TabBackups" Content="Geräte Backups" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
+                <RadioButton x:Name="TabSuiteBuilder" Content="Suite Builder" GroupName="Tabs" Style="{StaticResource TabButtonStyle}" Checked="Tab_Checked"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ===== CONTENT ===== -->
+        <Grid Grid.Row="2" x:Name="ContentArea" Background="{StaticResource BgPrimary}"/>
+
+        <!-- ===== STATUSBAR ===== -->
+        <Border Grid.Row="3" Background="{StaticResource BgDeep}" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderColor}">
+            <Grid Margin="16,0">
+                <TextBlock x:Name="StatusLeft" Text="~/aegis $  Sticks werden erkannt..."
+                           FontSize="10" Foreground="{StaticResource TextSecondary}"
+                           HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                <TextBlock x:Name="AppVersionText" Text="AEGIS v1.0  •  Kpmn Development"
+                           FontSize="10" Foreground="{StaticResource AccentBlue}"
+                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>
