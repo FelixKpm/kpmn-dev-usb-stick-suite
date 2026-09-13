@@ -3381,6 +3381,10 @@ namespace AEGIS
                 }
             });
 
+            // Wurzel der Ventoy-Datenpartition, sobald der Build durch ist – erst dann darf der
+            // optionale ISO-Dialog angeboten werden (vorher weiß niemand, wohin die Images sollen).
+            string? isoTarget = null;
+
             try
             {
                 statusText.Text = Loc.T("SuiteBuilder.Mabs.StageCheckingVentoy");
@@ -3436,6 +3440,8 @@ namespace AEGIS
                     statusText.Text += " " + string.Format(Loc.T("SuiteBuilder.Mabs.LabelFailed"), labelError);
 
                 StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StatusDone"), themeTarget);
+
+                isoTarget = themeTarget;
             }
             catch (Exception ex)
             {
@@ -3455,6 +3461,12 @@ namespace AEGIS
                 // Partitionierung und Bezeichnung haben sich geändert -> Dropdown neu aufbauen (setzt auch IsEnabled)
                 PopulateRemovableDrives(driveBox, preserveSelection: true);
             }
+
+            // Optionaler Folgeschritt: Betriebssystem-Images direkt auf die frische Datenpartition laden.
+            // Bewusst erst nach dem finally-Block, damit der Stick-Build selbst zu diesem Zeitpunkt
+            // vollständig abgeschlossen ist und der Dialog nichts davon blockieren kann.
+            if (isoTarget != null)
+                ShowMabsIsoSetupDialog(isoTarget);
         }
 
         // Ventoy gibt den Pfad der neu angelegten Datenpartition nicht zurück, deshalb diese Heuristik:
@@ -3527,6 +3539,290 @@ namespace AEGIS
 
             foreach (var dir in Directory.GetDirectories(sourceDir))
                 CopyDirectoryContents(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
+        }
+
+        // ----- MABS: Betriebssystem-Images auf die Ventoy-Datenpartition laden -----
+
+        // Microsofts offizielle Windows-11-Downloadseite. Bewusst nur ein Link und kein Download:
+        // Microsoft erzeugt die eigentliche ISO-Adresse erst nach einer Auswahl im Browser, bindet sie
+        // an die Sitzung und lässt sie nach 24 Stunden ablaufen – das ist nicht automatisierbar.
+        private const string WindowsIsoDownloadUrl = "https://www.microsoft.com/software-download/windows11";
+
+        // Folgeschritt nach einem erfolgreichen MABS-Build: Ventoy bootet jede .iso-Datei, die in der
+        // Wurzel der Datenpartition liegt, ganz von allein – ein frisch gebauter Stick ist ohne Images
+        // aber erst mal ein leeres Bootmenü. Ubuntu und Kali holt AEGIS auf Wunsch direkt von den
+        // offiziellen Servern. Optional und jederzeit abbrechbar (Fenster schließen bricht ab).
+        private void ShowMabsIsoSetupDialog(string dataDriveRoot)
+        {
+            var isos = MabsIsoDownloadService.AllIsos;
+
+            var win = new Window
+            {
+                Title = Loc.T("SuiteBuilder.Mabs.Iso.Title"),
+                Width = 640,
+                MaxHeight = 720,
+                SizeToContent = SizeToContent.Height,
+                WindowStyle = WindowStyle.ToolWindow,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = (Brush)FindResource("BgPrimary"),
+                FontFamily = FontFamily
+            };
+
+            // Beim Schließen des Fensters einen laufenden Download abbrechen, statt ihn ins Leere weiterlaufen zu lassen
+            var cts = new System.Threading.CancellationTokenSource();
+            win.Closed += (_, _) => { try { cts.Cancel(); } catch { } };
+
+            var panel = new StackPanel { Margin = new Thickness(20) };
+            win.Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            };
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.Title"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.Intro"), "TextMuted", 12, new Thickness(0, 0, 0, 12)));
+
+            // Der freie Platz gehört hier direkt danebengeschrieben: zwei Images sind zusammen gut 11 GB,
+            // auf einem 16-GB-Stick wird das knapp und der Fehler käme sonst erst nach Stunden Download.
+            var freeDisplay = Loc.T("SuiteBuilder.Mabs.UnknownSize");
+            try
+            {
+                var info = new DriveInfo(dataDriveRoot);
+                if (info.IsReady)
+                    freeDisplay = FormatBytes(info.TotalFreeSpace);
+            }
+            catch { }
+
+            panel.Children.Add(CreateDialogTextBlock(
+                string.Format(Loc.T("SuiteBuilder.Mabs.Iso.TargetRoot"), dataDriveRoot, freeDisplay),
+                "TextSecondary", 12, new Thickness(0, 0, 0, 14)));
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            var progress = CreateProgressBar();
+
+            var summaryText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            // Anders als bei den AVAS-Paketen und den DART-Tools bekommt hier jede Zeile ihre eigene
+            // Schaltfläche: es sind nur zwei Einträge, aber jeder davon mehrere Gigabyte – "alles oder
+            // nichts" wäre bei der Größe die falsche Vorgabe. Während ein Download läuft, sind beide
+            // Schaltflächen gesperrt (ein Server nach dem anderen, wie in den anderen Dialogen auch).
+            var listStack = new StackPanel();
+            var downloadButtons = new List<Button>();
+
+            foreach (var iso in isos)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var nameText = CreateDialogTextBlock(iso.Name, "TextPrimary", 12, new Thickness(0, 0, 10, 0));
+                nameText.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(nameText, 0);
+                row.Children.Add(nameText);
+
+                var descriptionText = CreateDialogTextBlock(Loc.T(iso.DescriptionKey), "TextMuted", 11, new Thickness(0, 0, 10, 0));
+                descriptionText.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(descriptionText, 1);
+                row.Children.Add(descriptionText);
+
+                var stateText = CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.StatePending"), "TextMuted", 11, new Thickness(0, 0, 10, 0));
+                stateText.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(stateText, 2);
+                row.Children.Add(stateText);
+
+                var downloadButton = new Button
+                {
+                    Content = Loc.T("SuiteBuilder.Mabs.Iso.DownloadButton"),
+                    Style = (Style)FindResource("ToolbarButtonStyle"),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                Grid.SetColumn(downloadButton, 3);
+                row.Children.Add(downloadButton);
+
+                downloadButtons.Add(downloadButton);
+
+                var spec = iso;
+                var state = stateText;
+                downloadButton.Click += (_, _) => _ = DownloadMabsIsoAsync(
+                    spec, dataDriveRoot, downloadButtons, progress, statusText, summaryText, state, cts.Token);
+
+                listStack.Children.Add(row);
+            }
+
+            panel.Children.Add(new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = listStack
+            });
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.SourcesNote"), "TextMuted", 11, new Thickness(0, 0, 0, 4)));
+
+            panel.Children.Add(statusText);
+            panel.Children.Add(progress);
+            panel.Children.Add(summaryText);
+
+            // Zweiter, deutlich abgesetzter Block: Windows, das AEGIS nicht automatisch holen kann.
+            panel.Children.Add(BuildMabsManualWindowsSection());
+
+            var footer = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 18, 0, 0)
+            };
+            var closeButton = new Button
+            {
+                Content = Loc.T("SuiteBuilder.Mabs.Iso.Close"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                IsCancel = true
+            };
+            closeButton.Click += (_, _) => win.Close();
+            footer.Children.Add(closeButton);
+            panel.Children.Add(footer);
+
+            win.ShowDialog();
+        }
+
+        // Windows lässt sich nicht automatisieren: Microsoft erzeugt die ISO-Adresse erst nach einer
+        // Auswahl im Browser, bindet sie an die Sitzung und lässt sie nach 24 Stunden ablaufen. Statt
+        // eines Downloads gibt es hier denselben klickbaren Link wie bei den manuellen Einträgen im
+        // Treiber- und im DART-Tools-Dialog – plus den Zielordner auf dem Stick.
+        private Border BuildMabsManualWindowsSection()
+        {
+            var stack = new StackPanel();
+
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.ManualHeading"), "TextPrimary", 13, new Thickness(0, 0, 0, 6), bold: true));
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("SuiteBuilder.Mabs.Iso.ManualHint"), "TextMuted", 11, new Thickness(0, 0, 0, 10)));
+            stack.Children.Add(CreateDialogHyperlink(WindowsIsoDownloadUrl, 12, new Thickness(0, 0, 0, 0)));
+
+            return new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 22, 0, 0),
+                Child = stack
+            };
+        }
+
+        // Lädt genau ein Image in die Wurzel der Datenpartition. Ein Fehlschlag bleibt folgenlos:
+        // der MABS-Stick ist an dieser Stelle längst fertig, die Images sind reine Zugabe.
+        private async Task DownloadMabsIsoAsync(
+            MabsIsoSpec spec,
+            string dataDriveRoot,
+            IReadOnlyList<Button> downloadButtons,
+            ProgressBar progress,
+            TextBlock statusText,
+            TextBlock summaryText,
+            TextBlock state,
+            System.Threading.CancellationToken ct)
+        {
+            foreach (var button in downloadButtons)
+                button.IsEnabled = false;
+
+            progress.IsIndeterminate = false;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.Visibility = Visibility.Visible;
+
+            summaryText.Text = "";
+            summaryText.Foreground = (Brush)FindResource("TextSecondary");
+
+            state.Foreground = (Brush)FindResource("TextSecondary");
+            state.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StateDownloading"), 0);
+            statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.Progress"), spec.Name, 0, FormatBytes(0), FormatBytes(0));
+
+            StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StatusDownloading"), spec.Name, dataDriveRoot);
+
+            IProgress<(long BytesRead, long TotalBytes)> isoProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+            {
+                if (p.TotalBytes > 0)
+                {
+                    var percent = (int)Math.Min(100, p.BytesRead * 100 / p.TotalBytes);
+                    state.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StateDownloading"), percent);
+                    statusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.Mabs.Iso.Progress"), spec.Name, percent, FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+
+                    progress.IsIndeterminate = false;
+                    progress.Value = percent;
+                }
+                else
+                {
+                    // manche Spiegelserver liefern keine Content-Length (gechunkte Antwort)
+                    state.Text = FormatBytes(p.BytesRead);
+                    statusText.Text = string.Format(
+                        Loc.T("SuiteBuilder.Mabs.Iso.ProgressUnknownSize"), spec.Name, FormatBytes(p.BytesRead));
+                    progress.IsIndeterminate = true;
+                }
+            });
+
+            try
+            {
+                var result = await MabsIsoDownloadService.DownloadIsoAsync(spec, dataDriveRoot, isoProgress, ct);
+
+                if (result.Success && result.Skipped)
+                {
+                    state.Text = Loc.T("SuiteBuilder.Mabs.Iso.StateAlreadyPresent");
+                    summaryText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.SummaryAlreadyPresent"), result.FileName, dataDriveRoot);
+                    StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StatusAlreadyPresent"), result.FileName);
+                }
+                else if (result.Success)
+                {
+                    state.Text = Loc.T("SuiteBuilder.Mabs.Iso.StateDone");
+                    summaryText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.SummaryOk"), result.FileName, dataDriveRoot);
+                    StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StatusDone"), result.FileName, dataDriveRoot);
+                }
+                else
+                {
+                    var error = result.Error ?? "";
+                    state.Foreground = Brushes.IndianRed;
+                    state.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StateFailed"), error);
+                    summaryText.Foreground = Brushes.IndianRed;
+                    summaryText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.SummaryFailed"), spec.Name, error);
+                    StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StatusFailed"), spec.Name, error);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                state.Foreground = (Brush)FindResource("TextMuted");
+                state.Text = Loc.T("SuiteBuilder.Mabs.Iso.StateCancelled");
+                summaryText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.SummaryCancelled"), spec.Name);
+                StatusLeft.Text = string.Format(Loc.T("SuiteBuilder.Mabs.Iso.StatusCancelled"), spec.Name);
+            }
+            finally
+            {
+                progress.IsIndeterminate = false;
+                progress.Value = 100;
+                progress.Visibility = Visibility.Collapsed;
+                progress.IsIndeterminate = true;
+                statusText.Text = "";
+
+                foreach (var button in downloadButtons)
+                    button.IsEnabled = true;
+            }
         }
 
         // ----- AVAS: Treiber-Datenbank einrichten (Folgeschritt nach dem Bauen) -----
