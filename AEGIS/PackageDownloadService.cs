@@ -143,7 +143,9 @@ namespace AEGIS
 
         // 7-Zip und Notepad++ veröffentlichen nur über GitHub-Releases – dort steht die aktuelle
         // Version immer unter .../releases/latest, das passende Asset wird über den Dateinamen gesucht.
-        private static async Task<string> ResolveGitHubAssetAsync(
+        // Auch DartToolDownloadService (System Informer) nutzt diesen Resolver, damit es die
+        // GitHub-Sonderbehandlung (User-Agent, Accept-Header) im Projekt nur einmal gibt.
+        internal static async Task<string> ResolveGitHubAssetAsync(
             HttpClient http, string repo, Func<string, bool> assetMatches, CancellationToken ct)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{repo}/releases/latest");

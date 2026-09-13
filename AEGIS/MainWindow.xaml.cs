@@ -2911,12 +2911,8 @@ namespace AEGIS
             {
                 Width = 280,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                FontSize = 12,
                 Margin = new Thickness(0, 0, 0, 12),
-                Background = (Brush)FindResource("BgSurfaceAlt"),
-                Foreground = (Brush)FindResource("TextPrimary"),
-                BorderBrush = (Brush)FindResource("BorderColor"),
-                ItemContainerStyle = CreateDarkComboBoxItemStyle()
+                Style = (Style)FindResource("DarkComboBoxStyle")
             };
             PopulateRemovableDrives(driveBox);
 
@@ -2987,12 +2983,8 @@ namespace AEGIS
             {
                 Width = 280,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                FontSize = 12,
                 Margin = new Thickness(0, 0, 0, 12),
-                Background = (Brush)FindResource("BgSurfaceAlt"),
-                Foreground = (Brush)FindResource("TextPrimary"),
-                BorderBrush = (Brush)FindResource("BorderColor"),
-                ItemContainerStyle = CreateDarkComboBoxItemStyle()
+                Style = (Style)FindResource("DarkComboBoxStyle")
             };
             PopulateRemovableDrives(driveBox);
             driveBox.DropDownOpened += (_, _) => PopulateRemovableDrives(driveBox, preserveSelection: true);
@@ -3023,14 +3015,31 @@ namespace AEGIS
             return card;
         }
 
-        // Einträge im aufgeklappten Laufwerks-Dropdown im dunklen AEGIS-Look statt im hellen Windows-Standard
-        private Style CreateDarkComboBoxItemStyle()
+        // Laufwerk, von dem AEGIS gerade läuft (auf dem fertigen Stick der AEGIS-Datenträger selbst).
+        // Bewusst über den Ausführungspfad und nicht über das Datenträger-Label ermittelt, damit die
+        // Absicherung auch dann greift, wenn der Stick anders benannt ist.
+        private static string? GetRunningDriveRoot()
         {
-            var style = new Style(typeof(ComboBoxItem));
-            style.Setters.Add(new Setter(BackgroundProperty, (Brush)FindResource("BgSurfaceAlt")));
-            style.Setters.Add(new Setter(ForegroundProperty, (Brush)FindResource("TextPrimary")));
-            style.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 4, 6, 4)));
-            return style;
+            try
+            {
+                var root = Path.GetPathRoot(AppDomain.CurrentDomain.BaseDirectory);
+                return string.IsNullOrWhiteSpace(root) ? null : root;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsSameDriveRoot(string? a, string? b)
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+                return false;
+
+            return string.Equals(
+                a.TrimEnd('\\', '/'),
+                b.TrimEnd('\\', '/'),
+                StringComparison.OrdinalIgnoreCase);
         }
 
         // Füllt ein Dropdown mit den aktuell verbundenen Wechseldatenträgern
@@ -3040,10 +3049,17 @@ namespace AEGIS
 
             box.Items.Clear();
 
+            // Das Laufwerk, von dem AEGIS gerade ausgeführt wird, darf nie als Ziel auftauchen:
+            // ein Build/Format darauf würde die laufende Anwendung zerstören.
+            var runningRoot = GetRunningDriveRoot();
+
             DriveInfo[] drives;
             try
             {
-                drives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Removable && d.IsReady).ToArray();
+                drives = DriveInfo.GetDrives()
+                    .Where(d => d.DriveType == DriveType.Removable && d.IsReady)
+                    .Where(d => !IsSameDriveRoot(d.RootDirectory.FullName, runningRoot))
+                    .ToArray();
             }
             catch
             {
@@ -3196,9 +3212,11 @@ namespace AEGIS
                 }
             });
 
-            // Nach einem erfolgreichen AVAS-Build folgen die optionalen Schritte Treiber-Datenbank und Software-Pakete.
+            // Nach einem erfolgreichen AVAS-Build folgen die optionalen Schritte Treiber-Datenbank und Software-Pakete,
+            // nach einem DART-Build stattdessen der Download der portablen Diagnose-Tools.
             // Die Dialoge werden erst nach dem finally-Block gezeigt, damit die Karte vorher wieder freigegeben ist.
             var offerDriverSetup = false;
+            var offerDartToolSetup = false;
 
             try
             {
@@ -3235,6 +3253,10 @@ namespace AEGIS
 
                 // nur AVAS hat die SDI-Treiberinstallation – DART bekommt diesen Schritt nicht
                 offerDriverSetup = string.Equals(card.Repo, AvasSuiteRepo, StringComparison.OrdinalIgnoreCase);
+
+                // DART ist umgekehrt ohne seine portablen Tools nur eine leere Hülle: die Buttons zeigen
+                // auf Ordner, die das Repository selbst nicht mitliefert.
+                offerDartToolSetup = string.Equals(card.Repo, DartSuiteRepo, StringComparison.OrdinalIgnoreCase);
             }
             catch (Exception ex)
             {
@@ -3260,6 +3282,10 @@ namespace AEGIS
 
                 // zweiter, davon unabhängiger Schritt: die Installer für AVAS' Ordner "Files" holen
                 ShowPackageDownloadSetupDialog(drive.Root);
+            }
+            else if (offerDartToolSetup)
+            {
+                ShowDartToolsSetupDialog(drive.Root);
             }
         }
 
@@ -3518,6 +3544,10 @@ namespace AEGIS
         private const string IntelWirelessDownloadUrl =
             "https://www.intel.com/content/www/us/en/download/19351/intel-wireless-wi-fi-drivers-for-windows-10-and-windows-11.html";
 
+        // Dasselbe für die beiden DART-Tools, die AEGIS nicht automatisch holen kann (Cloudflare-Bot-Prüfung)
+        private const string HwInfoDownloadUrl = "https://www.hwinfo.com/download/";
+        private const string CrystalDiskInfoDownloadUrl = "https://crystalmark.info/en/software/crystaldiskinfo/";
+
         // Der eigentliche Treiber-Scanner, den AVAS in "Drivers" als SDI*.exe sucht und startet.
         // Das ursprüngliche "Snappy Driver Installer" ist tot (seit 2017), gepflegt wird heute der Fork
         // SDIO (Snappy Driver Installer Origin) von Glenn Delahoy. Es gibt keine feste "latest"-URL,
@@ -3535,6 +3565,7 @@ namespace AEGIS
             new(@"^SDIO_x64_R\d+\.exe$", RegexOptions.IgnoreCase);
 
         private const string AvasSuiteRepo = "AVAS";
+        private const string DartSuiteRepo = "DART";
         private const string DriversFolderName = "Drivers";
         private const string IntelEthernetFolderName = "Intel-Ethernet";
         private const string FilesFolderName = "Files";
@@ -4382,6 +4413,290 @@ namespace AEGIS
             }
 
             StatusLeft.Text = string.Format(Loc.T("PackageSetup.StatusDone"), succeeded, packages.Count, filesFolder);
+        }
+
+        // ----- Diagnose-Tools nach einem DART-Build -----
+
+        // Folgeschritt nach einem erfolgreichen DART-Build: DARTs Buttons zeigen auf feste, versionslose
+        // Ordner (z. B. "01_Hardware\CPU-Z"), die das Repository selbst nicht enthält – ohne diesen Schritt
+        // meldet DART beim Klick nur "Datei nicht gefunden". Optional und jederzeit abbrechbar.
+        private void ShowDartToolsSetupDialog(string driveRoot)
+        {
+            var tools = DartToolDownloadService.AllTools;
+
+            var win = new Window
+            {
+                Title = Loc.T("DartToolSetup.Title"),
+                Width = 620,
+                MaxHeight = 720,
+                SizeToContent = SizeToContent.Height,
+                WindowStyle = WindowStyle.ToolWindow,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = (Brush)FindResource("BgPrimary"),
+                FontFamily = FontFamily
+            };
+
+            // Beim Schließen des Fensters laufende Downloads abbrechen, statt sie ins Leere weiterlaufen zu lassen
+            var cts = new System.Threading.CancellationTokenSource();
+            win.Closed += (_, _) => { try { cts.Cancel(); } catch { } };
+
+            var panel = new StackPanel { Margin = new Thickness(20) };
+            win.Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            };
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DartToolSetup.Title"), "TextPrimary", 15, new Thickness(0, 0, 0, 10), bold: true));
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DartToolSetup.Intro"), "TextMuted", 12, new Thickness(0, 0, 0, 12)));
+            panel.Children.Add(CreateDialogTextBlock(
+                string.Format(Loc.T("DartToolSetup.TargetRoot"), driveRoot), "TextSecondary", 12, new Thickness(0, 0, 0, 14)));
+
+            // Liste der Tools: Name, Zielordner und ein Statusfeld, das der Download-Lauf fortschreibt
+            var listStack = new StackPanel();
+            var toolStates = new List<TextBlock>();
+
+            foreach (var tool in tools)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var nameText = CreateDialogTextBlock(tool.Name, "TextPrimary", 12, new Thickness(0));
+                Grid.SetColumn(nameText, 0);
+                row.Children.Add(nameText);
+
+                var folderText = CreateDialogTextBlock(tool.TargetRelativeFolder, "TextMuted", 11, new Thickness(0));
+                Grid.SetColumn(folderText, 1);
+                row.Children.Add(folderText);
+
+                var stateText = CreateDialogTextBlock(Loc.T("DartToolSetup.StatePending"), "TextMuted", 11, new Thickness(0));
+                Grid.SetColumn(stateText, 2);
+                row.Children.Add(stateText);
+
+                toolStates.Add(stateText);
+                listStack.Children.Add(row);
+            }
+
+            panel.Children.Add(new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = listStack
+            });
+
+            panel.Children.Add(CreateDialogTextBlock(Loc.T("DartToolSetup.SourcesNote"), "TextMuted", 11, new Thickness(0, 0, 0, 14)));
+
+            var downloadButton = new Button
+            {
+                Content = Loc.T("DartToolSetup.DownloadAllButton"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            panel.Children.Add(downloadButton);
+
+            var statusText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            panel.Children.Add(statusText);
+
+            var progress = CreateProgressBar();
+            panel.Children.Add(progress);
+
+            var summaryText = new TextBlock
+            {
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            panel.Children.Add(summaryText);
+
+            downloadButton.Click += (_, _) => _ = DownloadAllDartToolsAsync(
+                driveRoot, downloadButton, progress, statusText, summaryText, toolStates, cts.Token);
+
+            // Zweiter, deutlich abgesetzter Block: die beiden Tools, die AEGIS nicht automatisch holen kann.
+            panel.Children.Add(BuildDartManualToolsSection(driveRoot));
+
+            var footer = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 18, 0, 0)
+            };
+            var closeButton = new Button
+            {
+                Content = Loc.T("DartToolSetup.Close"),
+                Style = (Style)FindResource("ToolbarButtonStyle"),
+                IsCancel = true
+            };
+            closeButton.Click += (_, _) => win.Close();
+            footer.Children.Add(closeButton);
+            panel.Children.Add(footer);
+
+            win.ShowDialog();
+        }
+
+        // HWiNFO und CrystalDiskInfo lassen sich nicht automatisieren: Ihre Downloads laufen über
+        // SourceForge bzw. die eigene Herstellerseite, und beide antworten HttpClient-Anfragen mit einer
+        // Cloudflare-Bot-Prüfung (403). Die greift an der TLS-Signatur des Clients an, kein User-Agent
+        // hilft dagegen. Statt eines Downloads gibt es hier dieselben klickbaren Links wie im
+        // Treiber-Dialog für Realtek und Intel-WLAN – plus den exakten Zielordner auf dem Stick.
+        private Border BuildDartManualToolsSection(string driveRoot)
+        {
+            var stack = new StackPanel();
+
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("DartToolSetup.ManualHeading"), "TextPrimary", 13, new Thickness(0, 0, 0, 6), bold: true));
+            stack.Children.Add(CreateDialogTextBlock(Loc.T("DartToolSetup.ManualHint"), "TextMuted", 11, new Thickness(0, 0, 0, 12)));
+
+            stack.Children.Add(CreateDialogTextBlock(
+                string.Format(Loc.T("DartToolSetup.ManualHwInfoLabel"), Path.Combine(driveRoot, @"01_Hardware\HWiNFO")),
+                "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
+            stack.Children.Add(CreateDialogHyperlink(HwInfoDownloadUrl, 12, new Thickness(0, 0, 0, 12)));
+
+            stack.Children.Add(CreateDialogTextBlock(
+                string.Format(Loc.T("DartToolSetup.ManualCrystalDiskInfoLabel"), Path.Combine(driveRoot, @"02_Disk\CrystalDiskInfo")),
+                "TextSecondary", 11, new Thickness(0, 0, 0, 2)));
+            stack.Children.Add(CreateDialogHyperlink(CrystalDiskInfoDownloadUrl, 12, new Thickness(0, 0, 0, 0)));
+
+            return new Border
+            {
+                Background = (Brush)FindResource("BgSurfaceAlt"),
+                BorderBrush = (Brush)FindResource("BorderColor"),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 22, 0, 0),
+                Child = stack
+            };
+        }
+
+        // Lädt alle Tools nacheinander (nicht parallel – ein Anbieter nach dem anderen reicht völlig
+        // und hält die Fortschrittsanzeige einfach). Ein Fehlschlag stoppt den Durchlauf nicht.
+        private async Task DownloadAllDartToolsAsync(
+            string driveRoot,
+            Button downloadButton,
+            ProgressBar progress,
+            TextBlock statusText,
+            TextBlock summaryText,
+            IReadOnlyList<TextBlock> toolStates,
+            System.Threading.CancellationToken ct)
+        {
+            var tools = DartToolDownloadService.AllTools;
+
+            downloadButton.IsEnabled = false;
+            progress.IsIndeterminate = false;
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            progress.Value = 0;
+            progress.Visibility = Visibility.Visible;
+
+            summaryText.Text = "";
+            summaryText.Foreground = (Brush)FindResource("TextSecondary");
+
+            StatusLeft.Text = string.Format(Loc.T("DartToolSetup.StatusDownloading"), driveRoot);
+
+            var failures = new List<string>();
+            var succeeded = 0;
+            var cancelled = false;
+
+            for (var i = 0; i < tools.Count; i++)
+            {
+                var tool = tools[i];
+                var position = i + 1;
+                var state = toolStates[i];
+
+                state.Foreground = (Brush)FindResource("TextSecondary");
+                state.Text = string.Format(Loc.T("DartToolSetup.StateDownloading"), 0);
+                statusText.Text = string.Format(
+                    Loc.T("DartToolSetup.Progress"), tool.Name, position, tools.Count, 0, FormatBytes(0), FormatBytes(0));
+
+                IProgress<(long BytesRead, long TotalBytes)> toolProgress = new Progress<(long BytesRead, long TotalBytes)>(p =>
+                {
+                    if (p.TotalBytes > 0)
+                    {
+                        var percent = (int)Math.Min(100, p.BytesRead * 100 / p.TotalBytes);
+                        state.Text = string.Format(Loc.T("DartToolSetup.StateDownloading"), percent);
+                        statusText.Text = string.Format(
+                            Loc.T("DartToolSetup.Progress"), tool.Name, position, tools.Count, percent,
+                            FormatBytes(p.BytesRead), FormatBytes(p.TotalBytes));
+
+                        // Gesamtbalken: abgeschlossene Tools plus Fortschritt im aktuellen Tool
+                        progress.IsIndeterminate = false;
+                        progress.Value = Math.Min(100, (i * 100 + percent) / (double)tools.Count);
+                    }
+                    else
+                    {
+                        // manche Anbieter liefern keine Content-Length (gechunkte Antwort)
+                        state.Text = FormatBytes(p.BytesRead);
+                        statusText.Text = string.Format(
+                            Loc.T("DartToolSetup.ProgressUnknownSize"), tool.Name, position, tools.Count, FormatBytes(p.BytesRead));
+                        progress.IsIndeterminate = true;
+                    }
+                });
+
+                try
+                {
+                    var result = await DartToolDownloadService.DownloadToolAsync(tool, driveRoot, toolProgress, ct);
+
+                    if (result.Success)
+                    {
+                        succeeded++;
+                        state.Foreground = (Brush)FindResource("TextSecondary");
+                        state.Text = Loc.T("DartToolSetup.StateDone");
+                    }
+                    else
+                    {
+                        var error = result.Error ?? "";
+                        failures.Add(string.Format(Loc.T("DartToolSetup.FailureItem"), tool.Name, error));
+                        state.Foreground = Brushes.IndianRed;
+                        state.Text = string.Format(Loc.T("DartToolSetup.StateFailed"), error);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                    state.Foreground = (Brush)FindResource("TextMuted");
+                    state.Text = Loc.T("DartToolSetup.StateCancelled");
+                    break;
+                }
+            }
+
+            progress.IsIndeterminate = false;
+            progress.Value = 100;
+            progress.Visibility = Visibility.Collapsed;
+            progress.IsIndeterminate = true;
+            statusText.Text = "";
+            downloadButton.IsEnabled = true;
+
+            if (cancelled)
+            {
+                summaryText.Text = string.Format(Loc.T("DartToolSetup.SummaryCancelled"), succeeded, tools.Count);
+                StatusLeft.Text = string.Format(Loc.T("DartToolSetup.StatusCancelled"), succeeded, tools.Count);
+                return;
+            }
+
+            if (failures.Count == 0)
+            {
+                summaryText.Text = string.Format(Loc.T("DartToolSetup.SummaryAllOk"), tools.Count, driveRoot);
+            }
+            else
+            {
+                summaryText.Foreground = Brushes.IndianRed;
+                summaryText.Text = string.Format(
+                    Loc.T("DartToolSetup.SummaryPartial"), succeeded, tools.Count, string.Join("; ", failures));
+            }
+
+            StatusLeft.Text = string.Format(Loc.T("DartToolSetup.StatusDone"), succeeded, tools.Count, driveRoot);
         }
 
         // Löscht alle Dateien und Ordner im Wurzelverzeichnis des Laufwerks.

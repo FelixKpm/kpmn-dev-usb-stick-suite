@@ -4,6 +4,7 @@
         Title="AEGIS" Height="720" Width="1180"
         Background="#1A2E4A"
         WindowStartupLocation="CenterScreen"
+        Icon="Assets/AEGIS_Icon.ico"
         FontFamily="Consolas">
 
     <Window.Resources>
@@ -117,6 +118,156 @@
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
                                 <Setter TargetName="Border" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Eintrag im aufgeklappten Dropdown (dunkler AEGIS-Look statt Windows-Standard) -->
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderThickness="2,0,0,0"
+                                BorderBrush="Transparent"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBox im AEGIS-Dark-Theme (kompletter ControlTemplate, sonst bleibt die Windows-Chrome hell) -->
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Background" Value="{StaticResource BgSurfaceAlt}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="TemplateRoot" SnapsToDevicePixels="True">
+
+                            <!-- Zugeklappter Zustand: Rahmen + Pfeil liegen im ToggleButton -->
+                            <ToggleButton x:Name="ToggleButton"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Border"
+                                                CornerRadius="6"
+                                                Background="{StaticResource BgSurfaceAlt}"
+                                                BorderBrush="{StaticResource BorderColor}"
+                                                BorderThickness="1"
+                                                SnapsToDevicePixels="True">
+                                            <TextBlock x:Name="Arrow"
+                                                       Text="&#x25BC;"
+                                                       FontSize="9"
+                                                       Foreground="{StaticResource TextSecondary}"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,10,0"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                                <Setter TargetName="Arrow" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="{StaticResource BgSurface}"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                                <Setter TargetName="Arrow" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <!-- Ausgewählter Eintrag: Foreground hier explizit setzen, sonst bleibt der Text unlesbar -->
+                            <ContentPresenter x:Name="ContentSite"
+                                              ContentSource="SelectionBoxItem"
+                                              IsHitTestVisible="False"
+                                              Margin="10,0,28,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{StaticResource TextPrimary}"/>
+
+                            <!-- Aufgeklappte Liste -->
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   Placement="Bottom"
+                                   PlacementTarget="{Binding ElementName=TemplateRoot}"
+                                   PopupAnimation="Slide"
+                                   IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                                <Border x:Name="DropDownBorder"
+                                        Margin="0,4,10,12"
+                                        CornerRadius="6"
+                                        Background="{StaticResource BgSurfaceAlt}"
+                                        BorderBrush="{StaticResource BorderColor}"
+                                        BorderThickness="1"
+                                        SnapsToDevicePixels="True"
+                                        MinWidth="{Binding ActualWidth, ElementName=TemplateRoot}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border.Effect>
+                                        <DropShadowEffect Color="#0B1626" BlurRadius="12" ShadowDepth="2" Opacity="0.6"/>
+                                    </Border.Effect>
+                                    <ScrollViewer x:Name="DropDownScrollViewer"
+                                                  Margin="0,4,0,4"
+                                                  CanContentScroll="True"
+                                                  SnapsToDevicePixels="True">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="TemplateRoot" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="ContentSite" Property="TextElement.Foreground" Value="{StaticResource TextMuted}"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="DropDownBorder" Property="MinHeight" Value="24"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

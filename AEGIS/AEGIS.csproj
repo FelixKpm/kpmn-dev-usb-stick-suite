@@ -7,10 +7,12 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AEGIS</RootNamespace>
     <AssemblyName>AEGIS</AssemblyName>
+    <ApplicationIcon>Assets\AEGIS_Icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\**\*.png" />
+    <Resource Include="Assets\AEGIS_Icon.ico" />
   </ItemGroup>
 
   <ItemGroup>
