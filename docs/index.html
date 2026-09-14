@@ -233,12 +233,12 @@
       <div class="h1-line"><span data-lang-block data-lang="de" class="lang-active">AEGIS &amp; der Suite Builder</span><span data-lang-block data-lang="en">AEGIS &amp; the Suite Builder</span></div>
       <p class="lede lang-active" data-lang-block data-lang="de">
         Technisches Handbuch für AEGIS, die Kommandozentrale der KPMN USB-Stick Suite. Erklärt den
-        Gesamt-Usecase, die selbst gehostete Gitea-Infrastruktur, und geht Schritt für Schritt durch den
+        Gesamt-Usecase, woher AEGIS die Sticks lädt, und geht Schritt für Schritt durch den
         Suite Builder – der eigentliche Daseinsgrund von AEGIS.
       </p>
       <p class="lede" data-lang-block data-lang="en">
         Technical handbook for AEGIS, the command center of the KPMN USB-Stick Suite. Explains the overall
-        use case, the self-hosted Gitea infrastructure, and walks through the Suite Builder step by step –
+        use case, where AEGIS gets the sticks from, and walks through the Suite Builder step by step –
         the actual reason AEGIS exists.
       </p>
       <div class="tag-row">
@@ -254,7 +254,7 @@
     <div class="cmd"><span class="p1">~/kpmn $</span> <span class="p2">ls docs/</span></div>
     <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#ueberblick"><span data-lang-block data-lang="de" class="lang-active">01-ueberblick.md</span><span data-lang-block data-lang="en">01-overview.md</span></a></div>
     <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#sticks">02-sticks.md</a></div>
-    <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#gitea">03-gitea.md</a></div>
+    <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#gitea"><span data-lang-block data-lang="de" class="lang-active">03-infrastruktur.md</span><span data-lang-block data-lang="en">03-infrastructure.md</span></a></div>
     <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#aegis">04-aegis.md</a></div>
     <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#builder">05-suite-builder.md</a></div>
     <div class="ls-line"><span class="perm">-rw-r--r--</span> <a href="#sicherheit"><span data-lang-block data-lang="de" class="lang-active">06-sicherheit.md</span><span data-lang-block data-lang="en">06-security.md</span></a></div>
@@ -335,45 +335,57 @@
       </div>
     </section>
 
-    <!-- ============ 03 GITEA ============ -->
+    <!-- ============ 03 INFRASTRUKTUR ============ -->
     <section id="gitea">
-      <div class="cmd"><span class="p1">~/kpmn $</span> <span class="p2">cat docs/03-gitea.md</span><span class="cursor">▋</span></div>
-      <h2><span data-lang-block data-lang="de" class="lang-active">Gitea-Infrastruktur</span><span data-lang-block data-lang="en">Gitea infrastructure</span></h2>
+      <div class="cmd"><span class="p1">~/kpmn $</span> <span class="p2">cat docs/<span data-lang-block data-lang="de" class="lang-active">03-infrastruktur.md</span><span data-lang-block data-lang="en">03-infrastructure.md</span></span><span class="cursor">▋</span></div>
+      <h2><span data-lang-block data-lang="de" class="lang-active">Woher AEGIS die Sticks lädt</span><span data-lang-block data-lang="en">Where AEGIS gets the sticks from</span></h2>
       <p data-lang-block data-lang="de" class="lang-active">
-        AVAS, DART und MABS liegen als fertige Releases auf einem selbst gehosteten Gitea-Server. AEGIS' Suite
-        Builder lädt von dort ausschließlich die aktuellste Version – niemals Quellcode zum lokal Kompilieren,
-        sondern fertige, self-contained Binaries, damit auch ein frisch aufgesetzter Ziel-PC ohne .NET SDK
-        funktioniert.
+        AVAS, DART und MABS liegen als fertige Releases in drei privaten GitHub-Repos. AEGIS' Suite Builder lädt
+        von dort ausschließlich die aktuellste Version – niemals Quellcode zum lokal Kompilieren, sondern fertige,
+        self-contained Binaries, damit auch ein frisch aufgesetzter Ziel-PC ohne .NET SDK funktioniert.
       </p>
       <p data-lang-block data-lang="en">
-        AVAS, DART and MABS sit as finished releases on a self-hosted Gitea server. AEGIS's Suite Builder only
+        AVAS, DART and MABS sit as finished releases in three private GitHub repos. AEGIS's Suite Builder only
         ever downloads the latest version from there – never source code to compile locally, but a finished,
         self-contained binary, so a freshly reimaged target PC works even without the .NET SDK installed.
       </p>
 
-      <div class="cmd" style="margin-top:26px"><span class="p1">~/kpmn $</span> <span class="p2">cat suite-builder/gitea.cfg</span></div>
-      <div class="kv-line"><span class="k">server</span><span class="filepath">http://&lt;deine-pi-ip&gt;:3002</span></div>
-      <div class="kv-line"><span class="k">org</span><span class="filepath">kpmn-development</span></div>
-      <div class="kv-line"><span class="k">repos</span><span><span class="filepath">AVAS</span> <span class="filepath">DART</span> <span class="filepath">MABS</span></span></div>
-      <div class="kv-line">
-        <span class="k">token</span>
-        <span>
-          <span data-lang-block data-lang="de" class="lang-active">ein <strong>Read-Only</strong>-Token reicht (und sollte auch nur ein Read-Only-Token sein) – AEGIS liest nur, es schreibt nie auf den Gitea-Server.</span>
-          <span data-lang-block data-lang="en">a <strong>read-only</strong> token is enough (and should be the only kind used) – AEGIS only ever reads from the Gitea server, never writes to it.</span>
+      <div class="callout info">
+        <span class="cl-label">◆ <span data-lang-block data-lang="de" class="lang-active">Keine Einrichtung nötig</span><span data-lang-block data-lang="en">No setup required</span></span>
+        <span data-lang-block data-lang="de" class="lang-active">
+          AEGIS bringt einen fest einkompilierten, nur lesenden Zugriffstoken mit, beschränkt auf genau diese drei
+          Repos. Der Suite Builder funktioniert deshalb sofort nach dem ersten Start – keine Server-Adresse, kein
+          eigener Token, kein Einrichtungsschritt.
+        </span>
+        <span data-lang-block data-lang="en">
+          AEGIS ships with a compiled-in, read-only access token, scoped to only these three repos. The Suite
+          Builder therefore works immediately after the first launch – no server address, no token of your own, no
+          setup step.
         </span>
       </div>
 
-      <div class="callout info">
-        <span class="cl-label">◆ <span data-lang-block data-lang="de" class="lang-active">Warum ein eigener Gitea-Server?</span><span data-lang-block data-lang="en">Why a self-hosted Gitea server?</span></span>
+      <p data-lang-block data-lang="de" class="lang-active" style="margin-top:22px">
+        Diese drei Repos folgen einer strengeren Regel als AEGIS' eigener Quellcode: nur fertig getesteter,
+        wasserdichter Stand kommt hier rein, nie Zwischenstände oder work-in-progress – schließlich wird alles, was
+        hier liegt, automatisch auf andere Geräte übertragen, sobald jemand den Suite Builder benutzt.
+      </p>
+      <p data-lang-block data-lang="en" style="margin-top:22px">
+        These three repos follow a stricter rule than AEGIS's own source: only fully tested, watertight builds go
+        here, never intermediate or work-in-progress states – everything that lives here gets carried onto other
+        people's devices automatically the moment someone uses the Suite Builder.
+      </p>
+
+      <div class="callout">
+        <span class="cl-label">ⓘ <span data-lang-block data-lang="de" class="lang-active">AEGIS selbst herunterladen</span><span data-lang-block data-lang="en">Downloading AEGIS itself</span></span>
         <span data-lang-block data-lang="de" class="lang-active">
-          Alles, was hier liegt, wird automatisch auf andere Geräte übertragen, sobald jemand den Suite Builder
-          benutzt. Deshalb gilt für Gitea eine strengere Regel als für AEGIS' eigenen Quellcode: nur fertig
-          getesteter, wasserdichter Stand kommt hier rein – nie Zwischenstände oder work-in-progress.
+          AEGIS gibt es ebenfalls als fertigen, self-contained Release – auf der
+          <a href="https://github.com/FelixKpm/kpmn-dev-usb-stick-suite/releases" target="_blank" rel="noopener">Releases-Seite</a>
+          dieses Repos. Zip entpacken, <span class="filepath">AEGIS.exe</span> starten – kein .NET SDK, keine IDE, keine Installation nötig.
         </span>
         <span data-lang-block data-lang="en">
-          Everything that lives here gets carried onto other people's devices automatically the moment someone uses
-          the Suite Builder. That's why Gitea follows a stricter rule than AEGIS's own source: only fully tested,
-          watertight builds go here – never intermediate or work-in-progress states.
+          AEGIS is also available as a finished, self-contained release – on this repo's
+          <a href="https://github.com/FelixKpm/kpmn-dev-usb-stick-suite/releases" target="_blank" rel="noopener">Releases page</a>.
+          Extract the zip, run <span class="filepath">AEGIS.exe</span> – no .NET SDK, no IDE, no installation needed.
         </span>
       </div>
     </section>
@@ -563,8 +575,8 @@
           </li>
           <li>
             <span class="step-title"><span data-lang-block data-lang="de" class="lang-active">Kpmn-Theme wird übernommen</span><span data-lang-block data-lang="en">Kpmn theme gets applied</span></span>
-            <p data-lang-block data-lang="de" class="lang-active">Nach erfolgreicher Installation kopiert AEGIS das Kpmn-Theme vom Gitea-MABS-Repo nach <span class="filepath">&lt;Laufwerk&gt;\ventoy\</span>.</p>
-            <p data-lang-block data-lang="en">After a successful install, AEGIS copies the Kpmn theme from the Gitea MABS repo to <span class="filepath">&lt;drive&gt;\ventoy\</span>.</p>
+            <p data-lang-block data-lang="de" class="lang-active">Nach erfolgreicher Installation kopiert AEGIS das Kpmn-Theme vom MABS-GitHub-Repo nach <span class="filepath">&lt;Laufwerk&gt;\ventoy\</span>.</p>
+            <p data-lang-block data-lang="en">After a successful install, AEGIS copies the Kpmn theme from the MABS GitHub repo to <span class="filepath">&lt;drive&gt;\ventoy\</span>.</p>
           </li>
           <li>
             <span class="step-title"><span data-lang-block data-lang="de" class="lang-active">Betriebssystem-Abbilder (optional)</span><span data-lang-block data-lang="en">OS images (optional)</span></span>
@@ -616,8 +628,8 @@
         <thead><tr><th><span data-lang-block data-lang="de" class="lang-active">Problem</span><span data-lang-block data-lang="en">Problem</span></th><th><span data-lang-block data-lang="de" class="lang-active">Lösung</span><span data-lang-block data-lang="en">Fix</span></th></tr></thead>
         <tbody>
           <tr>
-            <td><span data-lang-block data-lang="de" class="lang-active">"Version konnte nicht abgerufen werden: 401"</span><span data-lang-block data-lang="en">"Could not fetch version: 401"</span></td>
-            <td><span data-lang-block data-lang="de" class="lang-active">Gitea-Token in den Einstellungen ist ungültig/abgelaufen – unter <span class="filepath">Suite Builder → Gitea-Einstellungen</span> neu eintragen.</span><span data-lang-block data-lang="en">Gitea token in settings is invalid/expired – re-enter it under <span class="filepath">Suite Builder → Gitea settings</span>.</span></td>
+            <td><span data-lang-block data-lang="de" class="lang-active">"Version konnte nicht abgerufen werden"</span><span data-lang-block data-lang="en">"Could not fetch version"</span></td>
+            <td><span data-lang-block data-lang="de" class="lang-active">Meist ein Netzwerk-/Internetproblem auf dem PC, auf dem AEGIS läuft – GitHub-Erreichbarkeit prüfen und über <span class="filepath">Aktualisieren</span> erneut versuchen. Einrichtung ist keine nötig, der Zugriffstoken steckt fest in AEGIS.</span><span data-lang-block data-lang="en">Usually a network/internet issue on the machine running AEGIS – check that GitHub is reachable and try again via <span class="filepath">Refresh</span>. No setup is needed, the access token is baked into AEGIS.</span></td>
           </tr>
           <tr>
             <td><span data-lang-block data-lang="de" class="lang-active">Ein Download schlägt mit Fehler fehl</span><span data-lang-block data-lang="en">A download fails with an error</span></td>
