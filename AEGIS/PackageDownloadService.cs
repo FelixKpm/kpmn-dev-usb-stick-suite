@@ -102,7 +102,7 @@ namespace AEGIS
             }
         }
 
-        // Gestückeltes Laden mit Fortschrittsmeldung – gemeinsamer Kern aller Nicht-Gitea-Downloads
+        // Gestückeltes Laden mit Fortschrittsmeldung – gemeinsamer Kern aller Downloads ohne Auth-Header
         // (auch das Intel-Treiberpaket im Treiber-Dialog läuft hierüber).
         internal static async Task DownloadToFileAsync(
             string url,

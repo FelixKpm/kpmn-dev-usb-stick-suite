@@ -72,7 +72,7 @@ namespace AEGIS
                         await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                         readTotal += read;
 
-                        // wie beim Gitea-Download nur alle ~256 KB melden, sonst flutet der Dispatcher
+                        // wie bei den übrigen Downloads nur alle ~256 KB melden, sonst flutet der Dispatcher
                         if (progress != null && readTotal - lastReported >= 262144)
                         {
                             lastReported = readTotal;
