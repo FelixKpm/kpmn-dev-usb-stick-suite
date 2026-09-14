@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -2641,7 +2641,6 @@ namespace AEGIS
         private static readonly string[] SuiteBuilderRepos = { "AVAS", "DART" };
 
         private readonly string _suiteBuilderTempDir = Path.Combine(Path.GetTempPath(), "AEGIS-SuiteBuilder");
-        private GiteaSettings _giteaSettings = new();
         private readonly List<SuiteBuildCard> _suiteBuildCards = new();
 
         // Zählt Tab-Neuaufbauten mit, damit späte Antworten alter Release-Abfragen keine neue UI mehr überschreiben
@@ -2690,7 +2689,7 @@ namespace AEGIS
             public Button BuildButton { get; init; } = null!;
             public TextBlock StatusText { get; init; } = null!;
             public ProgressBar Progress { get; init; } = null!;
-            public GiteaRelease? Release { get; set; }
+            public GitHubRelease? Release { get; set; }
         }
 
         private void LoadSuiteBuilderTab()
@@ -2699,128 +2698,8 @@ namespace AEGIS
             _suiteBuildCards.Clear();
             _suiteBuilderGeneration++;
 
-            _giteaSettings = GiteaSettings.Load();
-
-            if (!_giteaSettings.IsConfigured)
-                ShowGiteaSetupPrompt();
-            else
-                ShowSuiteBuilderUi();
-        }
-
-        // ----- Gitea-Einrichtung -----
-
-        private void ShowGiteaSetupPrompt()
-        {
-            var panel = new StackPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Width = 360
-            };
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = Loc.T("SuiteBuilder.SetupTitle"),
-                Foreground = (Brush)FindResource("TextPrimary"),
-                FontSize = 16,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 8)
-            });
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = Loc.T("SuiteBuilder.SetupDescription"),
-                Foreground = (Brush)FindResource("TextMuted"),
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 16)
-            });
-
-            var urlBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupServerLabel"), _giteaSettings.BaseUrl);
-            var orgBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupOrgLabel"), _giteaSettings.Org);
-            var tokenBox = CreateSetupTextBox(panel, Loc.T("SuiteBuilder.SetupTokenLabel"), _giteaSettings.Token);
-
-            var errorText = new TextBlock
-            {
-                Foreground = Brushes.IndianRed,
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 4, 0, 8),
-                Visibility = Visibility.Collapsed
-            };
-            panel.Children.Add(errorText);
-
-            void ShowError(string message)
-            {
-                errorText.Text = message;
-                errorText.Visibility = Visibility.Visible;
-            }
-
-            var saveButton = new Button
-            {
-                Content = Loc.T("SuiteBuilder.SetupSave"),
-                Style = (Style)FindResource("ToolbarButtonStyle"),
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-
-            saveButton.Click += (_, _) =>
-            {
-                var url = urlBox.Text.Trim();
-                var org = orgBox.Text.Trim();
-                var token = tokenBox.Text.Trim();
-
-                if (url.Length == 0 || org.Length == 0 || token.Length == 0)
-                {
-                    ShowError(Loc.T("SuiteBuilder.SetupErrorIncomplete"));
-                    return;
-                }
-
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
-                {
-                    ShowError(Loc.T("SuiteBuilder.SetupErrorInvalidUrl"));
-                    return;
-                }
-
-                var settings = new GiteaSettings { BaseUrl = url.TrimEnd('/'), Org = org, Token = token };
-                if (!settings.Save())
-                {
-                    ShowError(Loc.T("SuiteBuilder.SetupErrorSaving"));
-                    return;
-                }
-
-                _giteaSettings = settings;
-                LoadSuiteBuilderTab();
-            };
-
-            panel.Children.Add(saveButton);
-
-            ContentArea.Children.Add(panel);
-        }
-
-        private TextBox CreateSetupTextBox(StackPanel parent, string label, string value)
-        {
-            parent.Children.Add(new TextBlock
-            {
-                Text = label,
-                Foreground = (Brush)FindResource("TextMuted"),
-                FontSize = 11,
-                Margin = new Thickness(0, 0, 0, 4)
-            });
-
-            var box = new TextBox
-            {
-                Text = value,
-                Background = (Brush)FindResource("BgSurfaceAlt"),
-                Foreground = (Brush)FindResource("TextPrimary"),
-                BorderBrush = (Brush)FindResource("BorderColor"),
-                Padding = new Thickness(8, 6, 8, 6),
-                FontSize = 12,
-                Margin = new Thickness(0, 0, 0, 10)
-            };
-            parent.Children.Add(box);
-            return box;
+            // Nichts einzurichten: Owner und Lese-Token stecken fest in GitHubReleaseService
+            ShowSuiteBuilderUi();
         }
 
         // ----- Builder-Oberfläche -----
@@ -2852,21 +2731,6 @@ namespace AEGIS
             var refreshButton = new Button { Content = Loc.T("SuiteBuilder.RefreshButton"), Style = (Style)FindResource("ToolbarButtonStyle") };
             refreshButton.Click += (_, _) => LoadSuiteBuilderTab();
             toolbar.Children.Add(refreshButton);
-
-            var settingsButton = new Button
-            {
-                Content = Loc.T("SuiteBuilder.SettingsButton"),
-                Style = (Style)FindResource("ToolbarButtonStyle"),
-                Margin = new Thickness(8, 0, 0, 0)
-            };
-            settingsButton.Click += (_, _) =>
-            {
-                ContentArea.Children.Clear();
-                _suiteBuildCards.Clear();
-                _suiteBuilderGeneration++;
-                ShowGiteaSetupPrompt();
-            };
-            toolbar.Children.Add(settingsButton);
 
             panel.Children.Add(toolbar);
 
@@ -3096,18 +2960,16 @@ namespace AEGIS
             box.SelectedIndex = restoredIndex >= 0 ? restoredIndex : 0;
         }
 
-        // Holt für alle Karten parallel das jeweils neueste Release vom Gitea-Server
+        // Holt für alle Karten nacheinander das jeweils neueste Release von GitHub
         private async Task RefreshSuiteReleasesAsync(int generation)
         {
-            var settings = _giteaSettings;
-
             foreach (var card in _suiteBuildCards.ToList())
             {
                 var repo = card.Repo;
 
                 try
                 {
-                    var release = await GiteaService.GetLatestReleaseAsync(settings, repo);
+                    var release = await GitHubReleaseService.GetLatestReleaseAsync(repo);
 
                     // Tab wurde zwischenzeitlich neu aufgebaut -> Ergebnis verwerfen
                     if (generation != _suiteBuilderGeneration)
@@ -3142,7 +3004,7 @@ namespace AEGIS
 
         private async Task BuildSuiteStickAsync(SuiteBuildCard card)
         {
-            if (card.Release?.ZipAsset is not GiteaAsset asset)
+            if (card.Release?.ZipAsset is not GitHubAsset asset)
             {
                 card.StatusText.Text = Loc.T("SuiteBuilder.NoReleaseYet");
                 return;
@@ -3221,7 +3083,7 @@ namespace AEGIS
             try
             {
                 card.StatusText.Text = string.Format(Loc.T("SuiteBuilder.Downloading"), card.Repo, version, 0, FormatBytes(0), FormatBytes(asset.Size));
-                await GiteaService.DownloadAssetAsync(_giteaSettings, asset, tempFile, downloadProgress);
+                await GitHubReleaseService.DownloadAssetAsync(card.Repo, asset.Id, tempFile, downloadProgress);
 
                 card.Progress.IsIndeterminate = true;
 
@@ -3429,7 +3291,7 @@ namespace AEGIS
                 var labelError = await Task.Run(() => TrySetVolumeLabel(themeTarget, MabsSuiteRepo));
 
                 statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDownloadingTheme"), 0, FormatBytes(0), FormatBytes(0));
-                await GiteaService.DownloadRepoArchiveAsync(_giteaSettings, MabsSuiteRepo, tempZip, themeDownloadProgress);
+                await GitHubReleaseService.DownloadRepoArchiveAsync(MabsSuiteRepo, tempZip, themeDownloadProgress);
 
                 progress.IsIndeterminate = true;
                 statusText.Text = string.Format(Loc.T("SuiteBuilder.Mabs.StageDeployingTheme"), themeTarget);
@@ -3522,7 +3384,7 @@ namespace AEGIS
 
             ZipFile.ExtractToDirectory(archiveFile, extractDir, overwriteFiles: true);
 
-            // Gitea packt das Archiv in einen Repo-Unterordner, deshalb rekursiv nach "ventoy" suchen
+            // GitHub packt das Archiv in einen Repo-Unterordner (Owner-Repo-Commit), deshalb rekursiv nach "ventoy" suchen
             var themeSource = Directory.EnumerateDirectories(extractDir, "ventoy", SearchOption.AllDirectories).FirstOrDefault();
             if (themeSource == null)
                 throw new DirectoryNotFoundException("ventoy");
@@ -4371,7 +4233,7 @@ namespace AEGIS
             try { if (File.Exists(file)) File.Delete(file); } catch { }
         }
 
-        // Wie GiteaService.DownloadAssetAsync, nur ohne Token/Gitea-spezifische URL-Korrektur.
+        // Wie GitHubReleaseService.DownloadAssetAsync, nur ohne Token und ohne Asset-API-Umweg.
         // Die Schleife selbst liegt in PackageDownloadService, damit es sie im Projekt nur einmal gibt –
         // dort steckt auch der HttpClient mit User-Agent (Intel antwortet ohne ihn mit 403, GitHub ebenso).
         private static Task DownloadFileWithProgressAsync(

@@ -1,0 +1,12 @@
+namespace AEGIS
+{
+    // Vorlage für GitHubReleaseService.Local.cs (diese Datei selbst ist versioniert,
+    // die echte .Local.cs ist es bewusst nicht). Zum Einrichten:
+    //   1. Diese Datei zu "GitHubReleaseService.Local.cs" kopieren.
+    //   2. Den Platzhalter unten durch einen echten fine-grained GitHub PAT ersetzen -
+    //      Repository access: nur AVAS/DART/MABS, Permissions: Contents = Read-only.
+    public static partial class GitHubReleaseService
+    {
+        private const string Token = "github_pat_REPLACE_ME";
+    }
+}

@@ -7,3 +7,6 @@ obj/
 # Claude Code local files and design mockups — not meant for the public repo
 .claude/
 *mockup*.html
+
+# Contains the real GitHub PAT — never commit to this public repo (see .example file)
+GitHubReleaseService.Local.cs
